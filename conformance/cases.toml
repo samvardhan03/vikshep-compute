@@ -1,0 +1,117 @@
+# VDS-1 conformance suite, numerics_version 1.
+#
+# Each table is a grid; `vikshep-conformance` expands it into cases in the
+# order written (outer to inner: the keys as listed). Case identifiers and
+# the input definitions are normative (spec/VDS-1.md section 11.2). The
+# stream id of a case is the first 8 bytes (little-endian) of
+# SHA3-256(case id); inputs are drawn from Stream(master_seed, stream_id).
+#
+# Expected outputs: conformance/vectors/v1/, produced by
+#   cargo run --release -p vikshep-conformance -- generate
+# Licence of this file and of conformance/vectors/: CC-BY-4.0.
+
+numerics_version = 1
+master_seed = 0x56445331
+# Outputs up to this many bytes are stored in full; larger ones by hash.
+store_bytes_max = 16384
+
+# Standalone 1-D FFTs, N = 2..4096, through the backend's fft / ifft kernels.
+[fft1d]
+log2_sizes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+directions = ["forward", "inverse"]
+inputs = ["uniform", "impulse", "alternating", "near_subnormal", "large"]
+
+# Standalone 2-D FFTs (rows, cols).
+[fft2d]
+shapes = [[2, 4], [8, 8], [16, 64], [64, 16], [128, 128], [256, 32]]
+directions = ["forward", "inverse"]
+inputs = ["uniform"]
+
+# Element-wise kernels.
+[modulus]
+lengths = [1024]
+inputs = ["uniform", "zeros", "near_subnormal", "large", "alternating"]
+
+[mul_real_filter]
+canvases = [[1, 256], [32, 32]]
+inputs = ["uniform", "near_subnormal", "large"]
+
+# Scattering grids. Every case records four outputs: S (coefficients),
+# r2, log_mean, and the filter-bank bytes (hash only).
+
+[[scatter]]
+dim = 1
+shapes = [[256], [1024]]
+J = [2, 4, 6]
+Q = [1, 4, 8]
+L = [1]
+pads = [["circular"]]
+groups = ["trivial"]
+max_order = 2
+inputs = ["uniform"]
+
+[[scatter]]
+dim = 1
+shapes = [[256], [192]]
+J = [4]
+Q = [1, 4]
+L = [1]
+pads = [["zero_pad"]]
+groups = ["trivial"]
+max_order = 2
+inputs = ["uniform"]
+
+[[scatter]]
+dim = 1
+shapes = [[256]]
+J = [4]
+Q = [2]
+L = [1]
+pads = [["circular"], ["zero_pad"]]
+groups = ["trivial"]
+max_order = 2
+inputs = ["zeros", "constant", "impulse", "near_subnormal", "large", "alternating"]
+
+[[scatter]]
+dim = 1
+shapes = [[256]]
+J = [3]
+Q = [1]
+L = [1]
+pads = [["circular"]]
+groups = ["trivial"]
+max_order = 1
+inputs = ["uniform"]
+
+[[scatter]]
+dim = 2
+shapes = [[32, 32], [64, 64], [128, 128]]
+J = [1, 2, 3, 4]
+Q = [1]
+L = [4, 8]
+pads = [["circular", "circular"], ["zero_pad", "circular"]]
+groups = ["trivial", "so2_relative"]
+max_order = 2
+inputs = ["uniform"]
+
+[[scatter]]
+dim = 2
+shapes = [[32, 32]]
+J = [2]
+Q = [1]
+L = [4]
+pads = [["circular", "circular"], ["zero_pad", "circular"]]
+groups = ["trivial", "so2_relative"]
+max_order = 2
+inputs = ["zeros", "constant", "impulse", "near_subnormal", "large", "alternating"]
+
+[[scatter]]
+dim = 2
+shapes = [[32, 64]]
+J = [3]
+Q = [1]
+L = [6]
+pads = [["zero_pad", "zero_pad"]]
+groups = ["trivial", "so2_relative"]
+max_order = 1
+inputs = ["uniform"]

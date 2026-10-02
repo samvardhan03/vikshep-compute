@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Draft. Complete for `numerics_version = 1` except section 14 (scattering), reserved for milestone C1 |
+| Status | Draft. Complete for `numerics_version = 1` (sections 1 to 14) |
 | Numerics version | 1 |
 | Reference implementation | this repository (`vikshep-compute`), Rust CPU code |
 | Copyright | Samvardhan Singh |
@@ -458,7 +458,20 @@ A 2-D transform of an `R x C` row-major array (`R`, `C` powers of two within
 6.1) applies the 1-D transform to every row first (length `C`), then to every
 column (length `R`), each with its own table `TW_C` / `TW_R`. Rows are
 independent of each other, as are columns, so they MAY be processed in any
-order or in parallel.
+order or in parallel. An axis of length 1 is not transformed, so a `1 x C`
+array is a 1-D transform. For the inverse, every 1-D transform applies its
+own scaling (rows by `2^-log2(C)`, then columns by `2^-log2(R)`).
+
+### 6.7 Reference implementation
+
+`vikshep_numerics::fft` (`crates/vikshep-numerics/src/fft.rs`) unrolls the
+recursion into a loop over levels that alternates the two buffers and
+performs the final copy when `m` is odd. Its output equals the literal
+transcription of section 6.2 bit for bit for every `m` in `1..=12`, forward
+and inverse (`production_fft_equals_literal_recursion_bitwise`), and is
+within `4 * log2(N) * eps32 * ||x||_2` of a naive binary64 DFT on every
+output element (`crates/vikshep-numerics/tests/fft.rs`). The 2-D transform
+moves columns through a transposed buffer; this is data movement only.
 
 ---
 
@@ -496,6 +509,13 @@ table is `[(1, 0)]`; for `N = 4` it is `[(1, 0), (0, -1)]`.
 Tables are built only by the reference Rust code (Tier 2). Backends receive
 the bytes (`re, im` interleaved, little-endian binary32, `N/2` entries).
 
+### 7.1 Binary64 host transform
+
+Filter construction (section 14) uses the same recursion in binary64 on the
+host (Tier 2). Its tables `TW64_N` follow the construction above with every
+`fl32` replaced by the identity (values stay binary64) and
+`s = fl64(sqrt(1/2))`. The binary64 transform is never a Tier-1 operation.
+
 ---
 
 ## 8. Subnormals
@@ -506,6 +526,16 @@ Default for the CPU reference: IEEE subnormals are preserved (no
 flush-to-zero of inputs or outputs). Rust on x86_64 and AArch64 preserves
 subnormals by default and the reference never changes the floating-point
 environment.
+
+CPU observations (C1): `cpu_preserves_subnormals`
+(`crates/vikshep-scatter/tests/properties.rs`) checks that the FFT of a
+subnormal impulse is a constant subnormal spectrum, that the inverse
+scaling by `2^-m` produces the exact smaller subnormal, and that filter
+multiplication of subnormals is exact. The conformance cases with
+`near_subnormal` inputs (section 11.2: FFT, modulus, filter multiplication
+and scattering cases) produce subnormal intermediates and pass bit-exactly
+on every platform that runs the suite (section 11.4). No CPU platform
+flushes subnormals.
 
 ### 8.2 Decision procedure
 
@@ -562,11 +592,95 @@ case MUST NOT change.
 
 ## 11. Conformance
 
+### 11.1 Definition
+
 A backend conforms to VDS-1 at a given `numerics_version` if and only if it
 reproduces 100% of that version's conformance cases bit-exactly. Partial
-conformance is non-conformance. The conformance runner is the
-`vikshep-conformance` binary; at numerics version 1 its cases are the sweeps
-of sections 4.4 and 5.6, and milestone C1 adds FFT and scattering cases.
+conformance is non-conformance.
+
+### 11.2 Suite v1
+
+The suite is defined by `conformance/cases.toml` (CC-BY-4.0) as grids that
+`vikshep-conformance` expands, outer to inner in the order the keys are
+written, into cases with normative identifiers:
+
+| Kind | Identifier | Outputs |
+|---|---|---|
+| 1-D FFT, N = 2..4096, forward and inverse | `fft1d/n{N}/{forward,inverse}/{input}` | `out` (complex) |
+| 2-D FFT | `fft2d/{R}x{C}/{direction}/{input}` | `out` (complex) |
+| modulus kernel | `modulus/n{n}/{input}` | `out` (complex) |
+| filter multiplication kernel | `mul_real_filter/{R}x{C}/{input}` | `out` (complex) |
+| scattering | `scatter/{dim}d/{shape}/J{J}-Q{Q}-L{L}/{pads}/{group}/o{max_order}/{input}` | `S`, `r2`, `log_mean`, `filters` |
+| C0 sweeps (sections 4.4, 5.6) | `sweep/{name}` | `out` (hash only) |
+
+The grids cover 1-D scattering with N in {256, 1024}, J in {2, 4, 6}, Q in
+{1, 4, 8}, plus zero padding, non-power-of-two length (192) and adversarial
+inputs; 2-D scattering with N in {32x32, 64x64, 128x128}, J in {1, 2, 3, 4},
+L in {4, 8}, pads circular/circular and zero_pad/circular, both groups, plus
+adversarial inputs, a rectangular zero-padded case with L = 6 and order-1
+cases. Version 1 has 313 cases.
+
+**Stream id** of a case: the first 8 bytes, little-endian, of SHA3-256 of its
+identifier. Inputs are drawn from `Stream(master_seed = 0x56445331,
+stream_id)` (section 5).
+
+**Inputs.** For a real signal of `R x C` samples (`R = 1` in 1-D), in
+row-major order, with `u = next_f32_unit()` drawn once per sample and all
+arithmetic in binary32:
+
+| Input | Sample value |
+|---|---|
+| `uniform` | `2u - 1` |
+| `near_subnormal` | `(2u - 1) * 2^-120` (straddles the subnormal range) |
+| `large` | `(2u - 1) * 2^40` (no overflow anywhere in the cascade) |
+| `zeros` | `+0` |
+| `constant` | `0.75` |
+| `impulse` | `1` at row `R/2`, column `C/2`, `+0` elsewhere |
+| `alternating` | `+1` if `r + c` is even, else `-1` |
+
+Complex inputs draw `re` then `im` for each sample for the three random
+kinds, and use the real pattern with `im = +0` for the others. The filter of
+a `mul_real_filter` case is `next_f32_unit()` per element, drawn after the
+input. Scattering cases use `carrier_cutoff = 1`.
+
+**Outputs.** `S` is the coefficient tensor (section 14.7), `r2` the ratio
+tensor (14.8), `log_mean` the fingerprint (14.9, binary64) and `filters` the
+canonical filter bytes (14.3.4).
+
+### 11.3 Expected vectors and runner
+
+`conformance/vectors/v1/expected.json` lists, per case and output, the
+dtype, byte length and SHA3-256; outputs of at most 16384 bytes (except
+`filters` and sweeps) are also stored in full in
+`conformance/vectors/v1/expected.bin` at the recorded offset. The vectors
+are produced by the CPU reference with
+
+```
+cargo run --release -p vikshep-conformance -- generate
+```
+
+and checked with
+
+```
+cargo run --release -p vikshep-conformance -- run --backend cpu [--report FILE]
+```
+
+which prints a JSON report: per case `PASS` or `FAIL`; for a failing output
+stored in full, the index of the first differing element (complex values
+count as two binary32 elements), the expected and actual bits and their
+distance in ulps; for a hash-only output, the hash mismatch. The report
+contains no timing or platform data, so reports from different machines
+compare byte for byte. The process exits non-zero if any case fails.
+`--backend capi-cpu` runs the CPU reference through the C ABI of section
+14.6.3.
+
+### 11.4 Cross-platform verification
+
+CI runs the full suite on Linux x86_64, Linux AArch64, macOS arm64 and
+Windows x86_64; the `hash-diff` job fails unless every report is all-pass
+and byte-identical. Before the first CI run, identical reports were also
+obtained on AArch64 Linux under qemu-user and on x86_64 Windows (MinGW build)
+under Wine.
 
 ---
 
@@ -575,14 +689,50 @@ of sections 4.4 and 5.6, and milestone C1 adds FFT and scattering cases.
 Determinism (identical bytes everywhere) and correctness (the bytes are
 right) are tested separately.
 
-- **Tolerance tests against an independent binary64 implementation.**
-  Kymatio (BSD-3-Clause) is used as a test oracle only; it is not a
-  dependency of, and is not distributed with, any shipped crate.
-- **Property tests:** Parseval / Littlewood-Paley energy bounds, translation
-  behaviour, non-expansiveness, homogeneity.
-- **Low-level references:** detmath against mpmath (section 4.3), the FFT
-  recursion against a naive DFT (section 6.4), the generators against
-  published known answers (section 5.5).
+### 12.1 Kymatio oracle
+
+Kymatio 0.3.0 (BSD-3-Clause, numpy backend, binary64) is a test oracle only;
+it is not a dependency of, and is not distributed with, any crate.
+`oracles/kymatio_fixtures.py` writes 20 fixtures (`oracles/fixtures/`, 8
+1-D and 12 2-D configurations including zero padding, a rectangular canvas
+and both groups) holding the binary32 input and references in the canonical
+path order, after aligning conventions (section 14.3.6). CI does not
+install Kymatio; `crates/vikshep-scatter/tests/kymatio_oracle.rs` compares
+against the committed fixtures. For each order `m` the error is
+
+```
+err_m = max over order-m paths and positions |ours - ref| / max |ref|
+```
+
+| Reference | Stated tolerance (orders 0, 1, 2) | Worst measured |
+|---|---|---|
+| `fullres`: Kymatio's filters, cascade at full resolution (1-D: Kymatio's own `scattering1d` core with oversampling >= J; 2-D: numpy around `kymatio.scattering2d.filter_bank`) | 2e-6, 2e-6, 2e-6 | 2.4e-7, 3.7e-7, 3.1e-7 |
+| `kymatio_core` (2-D only): Kymatio's own `scattering2d` core, which subsamples U1 by `2^j1` and U2 by `2^j2` in the Fourier domain | 2e-6, 0.05, 0.06 | 2.4e-7, 3.2e-2, 3.8e-2 |
+
+The `fullres` agreement is at binary32 precision. The `kymatio_core`
+difference is the aliasing of Kymatio's intermediate subsampling, which
+VDS-1 does not perform (section 14.3.6).
+
+### 12.2 Property tests
+
+`crates/vikshep-scatter/tests/`:
+
+- Littlewood-Paley bounds of each bank, recorded in section 14.3.5.
+- Discarded imaginary parts of 2-D Fourier filters below `1e-5` of the peak
+  (section 14.3.3).
+- Non-expansiveness on random pairs:
+  `2^(J*dim) * ||Sx - Sy||^2 <= 1.05 * ||x - y||^2` (the factor corrects for
+  the final subsampling; measured ratios are at most 0.07).
+- Circular-shift covariance: shifting the input by `2^J` samples on circular
+  axes shifts every path by one output sample, within `1e-5` of the peak.
+- Exact power-of-two homogeneity of S and r2, bit for bit (section 14.8).
+- Subnormal preservation on the CPU (section 8.1).
+
+### 12.3 Low-level references
+
+detmath against mpmath (section 4.3), the FFT against the literal recursion
+and a naive DFT (sections 6.4, 6.7), the generators against published known
+answers (section 5.5).
 
 ---
 
@@ -591,30 +741,361 @@ right) are tested separately.
 | Id | Question | Status | Default / resolution path |
 |---|---|---|---|
 | D-MATH | Source of portable transcendental functions | Decided: Option A (`libm =0.2.16`, no features) | Revisit only if the cross-platform sweep fails (section 4.2) |
-| D-FTZ | Preserve subnormals or flush to zero on every backend | Open | Preserve; procedure in section 8.2 |
+| D-FTZ | Preserve subnormals or flush to zero on every backend | Open (CPU observations recorded, section 8.1) | Preserve; procedure in section 8.2 |
 | D-SQRT | Is `sqrt` correctly rounded on each GPU backend? | Open | CPU: correctly rounded (IEEE-754 requires it; Rust lowers to the hardware square-root instruction). CUDA: `--prec-sqrt=true` expected to give a correctly rounded `sqrt`, to be verified. Metal: to be measured. Fallback for any backend that fails: a Markstein-style square root using an exact fused multiply-add and a final correction step, proven correctly rounded; this is the only place an FMA could be admitted, and only by amendment of this specification |
-| D-DIV | Division in Tier 1 | Decided: no division in Tier 1 | r2 ratios and any other quotient are computed on the host (Tier 2) |
+| D-DIV | Division in Tier 1 | Decided: no division in Tier 1 | r2 ratios, pooling means and every other quotient are computed on the host (Tier 2) |
 | D-STEER | Steerable-basis orientation synthesis | Open | Changes arithmetic; allowed only if the reference adopts it under a new `numerics_version` |
 
 ---
 
 ## 14. Scattering transform
 
-### 14.1 Morlet filter bank
+Implementation: `crates/vikshep-scatter` (host, Tier 2), the backend
+interface `crates/vikshep-backend-api`, the CPU reference
+`crates/vikshep-cpu` (Tier 1) and its C mirror `crates/vikshep-capi`.
 
-Specified in C1.
+With `u (*) h = IDFT(DFT(u) . h^)` the circular convolution on the canvas
+(section 14.4) by a real Fourier-domain filter `h^`, and `sub_J` the output
+subsampling of section 14.4:
 
-### 14.2 Gaussian low-pass filter
+```
+S0 x         = sub_J( x (*) phi_J )
+S1[l1] x     = sub_J( |x (*) psi_l1| (*) phi_J )
+S2[l1, l2] x = sub_J( ||x (*) psi_l1| (*) psi_l2| (*) phi_J ),   only for j(l2) > j(l1)
+```
 
-Specified in C1.
+No intermediate layer is subsampled: every convolution runs on the full
+canvas, and outputs are subsampled by `2^J` once, at the end. S0 is the real
+part of `x (*) phi_J`.
 
-### 14.3 Cascade (orders 0, 1, 2)
+### 14.1 Configuration
 
-Specified in C1.
+| Field | Meaning | Constraint |
+|---|---|---|
+| `dim` | 1 or 2 | |
+| `group` | `trivial` or `so2_relative` (section 14.5) | `so2_relative` requires `dim = 2` |
+| `J` | octaves; outputs subsampled by `2^J` | `1 <= J <= 11` |
+| `Q` | first-order wavelets per octave | 1-D: `1 <= Q <= 32`; 2-D: `Q = 1` |
+| `L` | orientations | 2-D: even, `2 <= L <= 32`; 1-D: `L = 1` |
+| `max_order` | 1 or 2 | |
+| `pad` | `circular` or `zero_pad`, one per axis (rows first) | section 14.4 |
+| `shape` | signal length per axis (rows first) | multiple of `2^J`; circular axes a power of two; canvas `<= 4096` |
+| `carrier_cutoff` | r2 keeps paths with `j1 >= carrier_cutoff` | default 1 |
 
-### 14.4 Output layout
+The joint SE(2) convolution and 3-D SO(3) scattering are out of scope of
+VDS-1.
 
-Specified in C1.
+### 14.2 One-dimensional Morlet filter bank
+
+Source: Kymatio 0.3.0, `kymatio/scattering1d/filter_bank.py`
+(`compute_params_filterbank`, `compute_sigma_psi`, `compute_xi_max`,
+`get_max_dyadic_subsampling`, `adaptive_choice_P`, `morlet_1d`,
+`gauss_1d`, `scattering_filter_factory` with `T = 2^J`). Filters are built
+directly in the Fourier domain, in binary64, with `vikshep-detmath`.
+
+Constants: `sigma0 = 0.1`, `alpha = 5`, `r_psi = fl64(sqrt(1/2))`,
+`eps = 1e-7`, `P_max = 5`. `pow2(e)` is the exact power of two for integer
+`e` and `detmath.exp(e * LN2)` otherwise, `LN2 = fl64(ln 2)`. Operations are
+evaluated left to right with one rounding each.
+
+**Parameters of a bank with quality factor `q`** (first order `q = Q`,
+second order `q = 1`):
+
+```
+sigma_min  = sigma0 * 2^-J
+xi_max     = max(1 / (1 + pow2(3 / q)), 0.35)
+sigma_psi(xi) = xi * ((1 - f) / (1 + f)) * (1 / sqrt(2 * detmath.ln(1 / r_psi))),
+                f = 1 / pow2(1 / q)
+if sigma_psi(xi_max) <= sigma_min:
+    filters = [];  elbow = sigma_psi(xi_max)
+else:
+    filters = [(xi_max, sigma_psi(xi_max))]
+    while sigma_last > sigma_min * pow2(1 / q):
+        append (xi_last / pow2(1 / q), sigma_last / pow2(1 / q))
+    elbow = xi_last
+for k in 1 .. q-1:
+    append (elbow - (k / q) * elbow, sigma_min)
+j(xi, sigma) = floor(-log2(min(xi + alpha * sigma, 0.5))) - 1
+```
+
+`j` is evaluated with exact comparisons: `floor(-log2(ub))` is the largest
+integer `k` with `ub <= 2^-k`.
+
+**Filter values** on a canvas of `N` bins, bin `k` at frequency `k / N`
+cycles per sample:
+
+```
+P      = min(ceil(sqrt(-2 * (sigma * sigma) * detmath.ln(eps)) + 1), P_max)
+G_c(k) = ( sum_{p = 0 .. 2P-2} detmath.exp( -(f_p - c)^2 / (2 * (sigma * sigma)) ) ) / (2P - 1),
+         f_p = ((1 - P) * N + p * N + k) / N,   summed in increasing p
+psi^   = G_xi - kappa * G_0,   kappa = G_xi(0) / G_0(0)
+phi^   = G_0 with sigma = sigma_low = sigma0 * 2^-J
+h^     = h^ / sum_n |h[n]|,    h = inverse binary64 DFT of h^ (section 7.1),
+         |z| = sqrt(re * re + im * im), summed in increasing n
+```
+
+1-D filters are real by construction. The canonical order of a bank is the
+generation order (decreasing `xi`, non-decreasing `j`).
+
+### 14.3 Two-dimensional Morlet filter bank
+
+Source: Kymatio 0.3.0, `kymatio/scattering2d/filter_bank.py` (`filter_bank`,
+`morlet_2d`, `gabor_2d`). Filters are built in the spatial domain in binary64
+and transformed with the binary64 host FFT. The same bank serves the first
+and second order.
+
+#### 14.3.1 Parameters
+
+For `j` in `0..J` and orientation index `l` in `0..L` (canonical order: `j`
+outer, `l` inner):
+
+```
+sigma = 0.8 * 2^j
+theta = (l * pi) / L                 # angles 0, pi/L, ..., (L-1) pi / L
+xi    = ((3/4) * pi) / 2^j           # radians per sample
+slant = 4 / L
+```
+
+Low-pass: `sigma_phi = 0.8 * 2^(J-1)`, `theta = 0`, `xi = 0`, `slant = 1`.
+`pi = fl64(pi)`.
+
+#### 14.3.2 Spatial construction
+
+On an `R x C` canvas (row `n`, column `m`):
+
+```
+c = detmath.cos(theta); s = detmath.sin(theta); s2 = slant * slant
+den  = 2 * sigma * sigma
+a    = (c * c + s2 * (s * s)) / den
+b    = (2 * (c * s) * (1 - s2)) / den
+d    = (s * s + s2 * (c * c)) / den
+norm = 2 * pi * sigma * sigma / slant
+for each (n, m):                     G = (0, 0); E = 0
+  for ex in -2..=2: for ey in -2..=2:
+    x = n + ex * R;  y = m + ey * C   (exact integers)
+    q = -(a * (x * x) + b * (x * y) + d * (y * y))
+    e = detmath.exp(q)
+    t = x * xi * c + y * xi * s
+    G = G + (e * detmath.cos(t), e * detmath.sin(t));  E = E + e
+  g[n, m] = G / norm (componentwise);  env[n, m] = E / norm
+```
+
+Terms with `q < -746` contribute exactly `+0` (`exp` underflows to zero) and
+MAY be skipped. Morlet:
+`K = (sum g.re / sum env, sum g.im / sum env)` (sums in row-major order),
+`psi = (g.re - K.re * env, g.im - K.im * env)`. Low-pass: `phi = env`.
+Fourier filter: the forward binary64 2-D transform (rows, then columns).
+
+#### 14.3.3 Real part
+
+The spatial filters are Hermitian (`psi(-u) = conj(psi(u))`), so their
+transforms are real up to rounding and the asymmetric tails of the 5 x 5
+periodization. The stored filter is the real part. The discarded imaginary
+part MUST NOT exceed `1e-5` of the largest real magnitude
+(`discarded_imaginary_part_is_small`; measured at most `1.5e-7` on the tested
+configurations).
+Multiplying a complex spectrum by a real filter is two independent
+products.
+
+#### 14.3.4 Truncation, rounding and fingerprint
+
+For every filter (1-D and 2-D): with `T = max_k |h^(k)|`, values with
+`|h^(k)| < 2^-40 * T` become exactly `+0`; the rest are rounded once to
+binary32. Truncation keeps every stored value far from the binary32
+subnormal range, which keeps the exactness argument of section 14.8 valid.
+
+The filter-bank fingerprint is the lowercase hex SHA3-256 of the canonical
+filter bytes: `phi`, then the first-order bank, then the second-order bank
+when it is distinct (1-D), each little-endian binary32 in canvas order. It
+is recorded in every provenance manifest (section 14.10) and is the
+`filters` output of every scattering conformance case.
+
+#### 14.3.5 Littlewood-Paley bounds (recorded)
+
+`A(w) = |phi^(w)|^2 + 1/2 sum_psi (|psi^(w)|^2 + |psi^(-w)|^2)` over all
+canvas frequencies (the symmetrisation accounts for analytic wavelets
+applied to real signals). The value 1 is attained at `w = 0`, where
+`phi^ = 1` and every wavelet vanishes. Measured
+(`littlewood_paley_bounds`):
+
+| Bank | min A | max A |
+|---|---:|---:|
+| 1-D N=256, J=4, Q=1 (first and second order) | 0.165797 | 1.000000 |
+| 1-D N=1024, J=6, Q=1 (first and second order) | 0.165824 | 1.000000 |
+| 1-D N=1024, J=6, Q=8, first order | 0.000290 | 1.000000 |
+| 1-D N=1024, J=6, second order (Q=1) | 0.165824 | 1.000000 |
+| 2-D 64x64, J=3, L=4 | 0.132018 | 1.000000 |
+| 2-D 64x64, J=3, L=8 | 0.122981 | 1.013572 |
+| 2-D 128x128, J=4, L=8 | 0.122981 | 1.046507 |
+
+Kymatio's normalizations (l1 in 1-D, Gaussian area in 2-D) are not tight
+frames: the lower bounds are well below 1, and the 2-D upper bound slightly
+exceeds 1 for L = 8.
+
+#### 14.3.6 Deviations from Kymatio 0.3.0
+
+1. **Orientation index.** Kymatio's index `t` has angle
+   `(L/2 - 1 - t) pi / L`; VDS-1 index `l` has angle `l pi / L`. They
+   correspond by `l = (L/2 - 1 - t) mod L`; where the angles differ by `pi`
+   the wavelets are complex conjugates and the moduli of real signals agree.
+   Reason: orientations in `[0, pi)` in increasing order.
+2. **2-D normalization constant.** Kymatio divides by
+   `2 * 3.1415 * sigma^2 / slant`; VDS-1 uses `pi`. Every 2-D filter is
+   smaller by `3.1415 / pi` and order-`m` coefficients by `(3.1415/pi)^(m+1)`.
+   Reason: the exact Gaussian normalization.
+3. **Precision.** Kymatio builds 2-D filters with a binary32 rotation matrix
+   and complex64 accumulation; VDS-1 uses binary64 throughout, and writes
+   the off-diagonal curvature as one term `b` (section 14.3.2).
+4. **Truncation** below `2^-40` of each filter's peak (section 14.3.4).
+5. **Single resolution.** Kymatio 2-D (and 1-D with `oversampling < J`)
+   subsamples intermediate layers by periodizing spectra; VDS-1 computes every
+   layer at full resolution and subsamples once (section 14.4), which avoids
+   aliasing and keeps the backend to five kernels.
+6. **Boundary.** Kymatio pads by reflection; VDS-1 uses circular or zero
+   padding (section 14.4).
+
+The oracle fixtures (section 12.1) apply 1, 2 and 6; 3 and 4 fall within the
+stated tolerance.
+
+### 14.4 Canvas, padding and output grid
+
+Per axis of length `n`, with `F = 2^J`:
+
+| Pad | Canvas length | Signal offset | Output length | Output offset |
+|---|---|---|---|---|
+| `circular` | `n` (power of two) | 0 | `n / F` | 0 |
+| `zero_pad` | `next_pow2(n + 2F)` | `F` | `n / F` | 1 |
+
+The canvas holds `(x, +0)` at the signal positions and `(+0, +0)` elsewhere;
+a 1-D canvas has one row. The output subsampling takes, for output position
+`(a, c)`, the real part of canvas element `(F * (o_r + a), F * (o_c + c))`
+with the output offsets `o` of the table (1-D: row 0).
+
+### 14.5 Groups
+
+`trivial`: every path of section 14.7. `so2_relative` (2-D only): pooled over
+absolute orientation, keeping the relative orientation of second-order paths,
+per output position:
+
+```
+S1'[j1]            = mean_l1 S1[(j1, l1)]
+S2'[j1, j2, delta] = mean_l1 S2[(j1, l1), (j2, (l1 + delta) mod L)],   delta in 0..L
+mean_l1 v(l1)      = fl32( (sum_{l1 = 0 .. L-1} fl64(v(l1))) / L )
+```
+
+The sum runs in increasing `l1` in binary64; the division is binary64; the
+result is rounded once to binary32. Pooling runs on the host.
+
+### 14.6 Execution plan and kernels
+
+#### 14.6.1 Kernels
+
+The host prepares filters and twiddle tables and moves data (copies and
+canvas embedding are exact). A backend executes exactly five kernels, each
+acting independently on every canvas of a batch of contiguous row-major
+binary32 complex canvases:
+
+| Kernel | Per element |
+|---|---|
+| `fft` | forward transform of sections 6.2 and 6.6 with host tables |
+| `ifft` | inverse transform (conjugate tables, `2^-m` per axis) |
+| `mul_real_filter` | `(re, im) -> (re * h, im * h)`, filter `index[b]` for canvas `b` |
+| `modulus` | `(re, im) -> (sqrt(re * re + im * im), +0)`: two products, one addition, correctly rounded `sqrt` |
+| `subsample` | `out[b][a][c] = in[b][F * (o_r + a)][F * (o_c + c)].re` |
+
+#### 14.6.2 Ordered invocations
+
+With `B` signals, the filter array `[phi, psi1_0, ..., psi2_0, ...]` (2-D:
+the second-order bank is the first-order bank) and `n1` first-order filters:
+
+1. host: embed the `B` signals in canvases `X`.
+2. `fft(X)`.
+3. `T = X`; `mul_real_filter(T, phi)`; `ifft(T)`; `subsample(T)` gives S0.
+4. For each signal `b`:
+   1. `U` = `n1` copies of `X[b]`; `mul_real_filter(U, psi1_0 .. psi1_{n1-1})`;
+      `ifft(U)`; `modulus(U)`; `fft(U)`.
+   2. `T = U`; `mul_real_filter(T, phi)`; `ifft(T)`; `subsample(T)` gives
+      S1 of `b`.
+   3. If `max_order = 2`, for each first-order filter `l1` with partners
+      `l2` (`j(l2) > j(l1)`, in bank order): `Z` = one copy of `U[l1]` per
+      partner; `mul_real_filter(Z, psi2_l2 ...)`; `ifft(Z)`; `modulus(Z)`;
+      `fft(Z)`; `mul_real_filter(Z, phi)`; `ifft(Z)`; `subsample(Z)` gives
+      S2 of `(b, l1, l2)`.
+5. host: pooling (14.5), r2 (14.8), log-mean (14.9).
+
+Because every kernel is element-wise per canvas, a backend MAY batch or
+reorder independent invocations and MAY fuse kernels, provided the
+arithmetic of every element is unchanged.
+
+#### 14.6.3 Interfaces
+
+Rust: the trait `vikshep_backend_api::ScatterBackend` (the five kernels on
+batches, plus `name()`, `numerics_version()`, `capabilities()`). C: the
+table `VkspBackendV1` in `include/vikshep_backend.h`, generated by cbindgen
+from `crates/vikshep-capi`. The caller owns every buffer; a kernel must not
+retain pointers after returning; `VkspComplex32` is `{ float re; float im; }`
+(8 bytes, alignment 4); calls are synchronous. `vksp_cpu_backend_v1()`
+exposes the CPU reference through the same table.
+
+### 14.7 Output layout
+
+`S` is a binary32 tensor `[B, P, out_rows, out_cols]` (1-D:
+`[B, P, out_len]`), row-major. Paths, in canonical order:
+
+- order 0;
+- order 1 by first-order filter: 1-D in bank order; 2-D by `(j1, theta1)`;
+- order 2 by `(first-order filter, second-order filter)`: 2-D by
+  `(j1, theta1, j2, theta2)`, only `j2 > j1`;
+- `so2_relative`: order 0; order 1 by `j1`; order 2 by `(j1, j2, delta)`.
+
+Path counts in 2-D: `trivial` `1 + J L + L^2 J (J - 1) / 2`;
+`so2_relative` `1 + J + L J (J - 1) / 2` (order 2 terms omitted when
+`max_order = 1`).
+
+### 14.8 Scale-free ratio r2 and exact homogeneity
+
+For every order-2 path `(l1, l2)` with `j1 >= carrier_cutoff` (S0 and the
+first-order carriers below the cutoff are dropped), per output position:
+
+```
+r2[l1, l2] = fl32( fl64(S2[l1, l2]) / fl64(S1[l1]) ),   r2 = +0 where S1[l1] = 0
+```
+
+computed on the host. r2 is a binary32 tensor `[B, P2, out...]` in the order
+of the kept order-2 paths. For `so2_relative`, `S1'[j1]` divides
+`S2'[j1, j2, delta]`.
+
+**Exact property.** For any input `x` and integer `k` such that no
+intermediate value overflows or is subnormal, `S(2^k x) = 2^k S(x)` and
+`r2(2^k x) = r2(x)` bit for bit: every Tier-1 operation commutes with
+scaling by a power of two (additions, subtractions and products by constants
+scale exactly; `sqrt(2^(2k) v) = 2^k sqrt(v)`; multiplication by `2^-m` is
+exact), the binary64 pooling mean commutes, and the ratio cancels the
+factor. Truncation (14.3.4) keeps filter products away from underflow.
+`crates/vikshep-scatter/tests/homogeneity.rs` checks this for
+`k in {-6, -3, -1, 1, 2, 5}` on 1-D and 2-D configurations, both groups and
+both pad policies.
+
+### 14.9 Log-mean fingerprint
+
+Per signal and path, in binary64 with `ln` from `vikshep-detmath`:
+
+```
+log_mean = psum( ln(2^-20 + |c_s|) for every output position s ) / count
+psum([]) = +0;  psum([a]) = a;  psum(a[0..n]) = psum(a[0..h]) + psum(a[h..n]),  h = floor(n / 2)
+```
+
+The output is binary64 `[B, P]`. The absolute value covers S0, which can be
+negative, and rounding below zero in S1 and S2.
+
+### 14.10 Provenance manifest
+
+Each scattering run is described by an RFC 8785 manifest
+(`vikshep_scatter::manifest::scattering_manifest`) with the keys `backend`,
+`config` (`J`, `L`, `Q`, `carrier_cutoff`, `dim`, `group`, `max_order`,
+`pad`, `shape`), `filter_bank_sha3`, `input_oid`, `kind`
+(`"vikshep.scattering"`), `numerics_version`, `output_dtype` and
+`output_oid`.
 
 ---
 
@@ -632,4 +1113,8 @@ Specified in C1.
 - `libm` crate 0.2.16, https://github.com/rust-lang/compiler-builtins
   (MIT licence; derived from musl libc).
 - mpmath, https://mpmath.org (BSD licence; used to generate test fixtures).
-- Kymatio, https://www.kymat.io (BSD-3-Clause; test oracle only).
+- Kymatio 0.3.0, https://www.kymat.io (BSD-3-Clause; filter parameterization
+  source and test oracle only).
+- J. Bruna, S. Mallat, "Invariant scattering convolution networks", IEEE
+  TPAMI 35(8), 2013.
+- RFC 2119, RFC 8174 (requirement key words).

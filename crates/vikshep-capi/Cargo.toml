@@ -9,7 +9,15 @@ authors.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[lib]
+crate-type = ["rlib", "staticlib", "cdylib"]
+
 [dependencies]
+vikshep-backend-api.workspace = true
+vikshep-cpu.workspace = true
+
+[dev-dependencies]
+vikshep-numerics.workspace = true
 
 # This crate does not inherit the workspace lint table: it will contain a
 # foreign-function interface, which cannot be written without `unsafe`, so

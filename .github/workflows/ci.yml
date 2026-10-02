@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    # bash on every OS (Git Bash on Windows) so redirections keep exact bytes.
+    shell: bash
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions-rust-lang/setup-rust-toolchain@v1 # reads rust-toolchain.toml
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: libm builds without optional features (VDS-1 section 4.2)
+        run: |
+          if cargo tree --locked -e features -i libm | grep -E 'libm feature'; then
+            echo "libm must be built with no features (feature unification enabled one)"
+            exit 1
+          fi
+
+  determinism-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: scripts/determinism-lint.sh
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: cargo test --workspace --locked
+
+  hashes:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Record platform
+        run: |
+          rustc -vV
+          uname -a || true
+      - name: Determinism-sweep hashes
+        run: |
+          mkdir -p out
+          cargo run --release --locked -p vikshep-conformance -- hashes > "out/hashes-${{ matrix.os }}.json"
+          cat "out/hashes-${{ matrix.os }}.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hashes-${{ matrix.os }}
+          path: out/hashes-${{ matrix.os }}.json
+          if-no-files-found: error
+
+  # Public, per-PR proof of cross-platform bit identity: every platform's
+  # report must equal the committed conformance vectors byte for byte (and
+  # therefore every other platform's report).
+  hash-diff:
+    needs: hashes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: hashes-*
+          path: reports
+          merge-multiple: true
+      - name: Compare reports across platforms
+        run: |
+          set -euo pipefail
+          ref=conformance/vectors/v1/hashes.json
+          expected=4 # number of entries in the hashes matrix
+          shopt -s nullglob
+          reports=(reports/*.json)
+          status=0
+          if [ "${#reports[@]}" -ne "$expected" ]; then
+            echo "expected $expected reports, found ${#reports[@]}"
+            status=1
+          fi
+          for f in "${reports[@]}"; do
+            if cmp -s "$ref" "$f"; then
+              echo "identical: $f"
+            else
+              echo "DIFFERS:   $f"
+              diff "$ref" "$f" || true
+              status=1
+            fi
+          done
+          sha256sum "$ref" "${reports[@]}"
+          exit $status

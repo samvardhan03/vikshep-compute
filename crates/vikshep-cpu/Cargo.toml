@@ -1,0 +1,15 @@
+[package]
+name = "vikshep-cpu"
+description = "CPU reference backend (VDS-1 Tier 1)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

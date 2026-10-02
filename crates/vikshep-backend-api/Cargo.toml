@@ -1,0 +1,15 @@
+[package]
+name = "vikshep-backend-api"
+description = "Backend interface implemented by the CPU reference and GPU backends"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

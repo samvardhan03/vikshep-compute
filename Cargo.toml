@@ -1,0 +1,53 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/vikshep-detmath",
+    "crates/vikshep-numerics",
+    "crates/vikshep-scatter",
+    "crates/vikshep-stats",
+    "crates/vikshep-train",
+    "crates/vikshep-anomaly",
+    "crates/vikshep-backend-api",
+    "crates/vikshep-cpu",
+    "crates/vikshep-py",
+    "crates/vikshep-capi",
+    "crates/vikshep-mcp",
+    "crates/vikshep-conformance",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.0"
+license = "AGPL-3.0-or-later"
+authors = ["Samvardhan Singh"]
+repository = "https://github.com/samvardhan03/vikshep-compute"
+publish = false
+
+[workspace.dependencies]
+# Exact pins: any change to these can change output bytes and therefore
+# requires review under spec/VDS-1.md section 10 (versioning).
+libm = { version = "=0.2.16", default-features = false }
+sha3 = { version = "=0.12.0", default-features = false }
+
+vikshep-detmath = { path = "crates/vikshep-detmath" }
+vikshep-numerics = { path = "crates/vikshep-numerics" }
+vikshep-backend-api = { path = "crates/vikshep-backend-api" }
+
+[workspace.lints.rust]
+# Every crate forbids unsafe code except vikshep-capi and vikshep-py, which
+# will expose foreign-function interfaces and therefore define their own lint
+# tables (see the comment in their Cargo.toml).
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+# Deliberately NOT enabled: clippy::suboptimal_flops (and the older
+# clippy::manual_mul_add). Those lints suggest replacing `a * b + c` with
+# `mul_add`, which changes rounding and is forbidden in Tier-1 code by
+# spec/VDS-1.md section 2. Keep them off.
+
+[profile.release]
+# Keep release arithmetic identical to debug: Rust never contracts or
+# reassociates floating-point operations at any optimisation level, and no
+# profile setting here may change that.
+debug = 1

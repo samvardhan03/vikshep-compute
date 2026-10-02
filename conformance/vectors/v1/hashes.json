@@ -1,0 +1,19 @@
+{
+  "hashes": {
+    "detmath.cos.f32": "ffc5317f7e6ed6097feb62a5cb9f8511a2344ffbaef0a28d2e6025833d4a0a26",
+    "detmath.cos.f64": "cd4f3ab763235ea758331f738ec662f38c0fff54aec5e33884a329f5c1d1322b",
+    "detmath.exp.f32": "d08bb3d78438af75dd97439dd6bdaaa2a40eddd23df3facce675971ba49998b5",
+    "detmath.exp.f64": "43783118379a15517bd194d722585aa3deca64942589426b77739df1df3fb874",
+    "detmath.ln.f32": "0de0e5afce6508909965bfb5b4ca67fe1045ea9f8847e8555aee3399e073789b",
+    "detmath.ln.f64": "fc70cd04f1040e2e45787ca1a05a90d8e65d7f520ce0c2ff5fc8a887dacfa717",
+    "detmath.sin.f32": "355967ea18fc6bf8939833a26a9ef2a670557b6deb176ab485bcf71c3e046c92",
+    "detmath.sin.f64": "fbd278689a89e6887ab9557d7effc68b36c3eb9d00f95c2f27032e853056b024",
+    "rng.philox.f32_unit": "f53bb1d6f4c3243da5efbcdc6b0e66fd38118efc4aec655454cd82142b365579",
+    "rng.philox.f64_unit": "80deb56e7f6131c47c320934cf34492c4f914e530785884044634c56dd283b48",
+    "rng.philox.normal_f64": "52b9ede9987824ae71a1c115ae7ebce29dba0b988df4f48fda50a05187d2a288",
+    "rng.philox.u32": "de01a59046ba1183e2b17134a905581d0e29fce4b4f88208e14018398972a115",
+    "rng.splitmix64.u64": "e0ff22c7a7717e419d2693cf926cd3d1d45aef9e622e6f1795c4559b45190c60"
+  },
+  "numerics_version": 1,
+  "sweep_length": 1000000
+}

@@ -1,0 +1,4 @@
+# Exceptions to scripts/determinism-lint.sh.
+# Format: <path> :: <substring of the offending line> :: <justification>
+# Every entry needs a justification, and stale entries fail the lint.
+# There are currently no exceptions.

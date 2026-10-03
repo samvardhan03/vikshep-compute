@@ -35,6 +35,8 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Clippy on the Python extension module (feature python)
+        run: cargo clippy -p vikshep-py --features python --all-targets --locked -- -D warnings
       - name: libm builds without optional features (VDS-1 section 4.2)
         run: |
           if cargo tree --locked -e features -i libm | grep -E 'libm feature'; then
@@ -58,6 +60,10 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - run: cargo test --workspace --locked
+      # Also part of the workspace run; repeated by name for the C3a gate:
+      # POSIX shared memory on Linux and macOS, the file store everywhere.
+      - name: MCP integration test (stdio, tensors by OID)
+        run: cargo test --locked -p vikshep-mcp --test stdio
 
   # Conformance suite v1 and the C0 determinism sweeps on every platform.
   conformance:
@@ -148,23 +154,86 @@ jobs:
           sha256sum "${reports[@]}" "${sweeps[@]}"
           exit $status
 
-  # The committed C header matches the Rust source, and C code compiles and
-  # runs against it.
-  c-header:
-    runs-on: ubuntu-latest
+  # The committed C headers match the Rust source (Linux), and the C smoke
+  # test, the C example and the C++ example build against the static library
+  # and run (Linux and macOS).
+  c-abi:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - run: cargo install cbindgen --version =0.29.4 --locked
-      - run: >
-          cbindgen --verify --config crates/vikshep-capi/cbindgen.toml
-          --crate vikshep-capi --output include/vikshep_backend.h
-      - name: C smoke test
+      - name: Headers are up to date
+        if: runner.os == 'Linux'
         run: |
-          cargo build --release --locked -p vikshep-capi
-          cc -std=c99 -Wall -Wextra -Werror -pedantic -Iinclude crates/vikshep-capi/c/abi_smoke.c \
-            target/release/libvikshep_capi.a -lpthread -ldl -lm -o abi_smoke
+          cargo install cbindgen --version =0.29.4 --locked
+          cbindgen --verify --config crates/vikshep-capi/cbindgen.toml \
+            --crate vikshep-capi --output include/vikshep_backend.h
+          cbindgen --verify --config crates/vikshep-capi/cbindgen-vikshep.toml \
+            --crate vikshep-capi --output include/vikshep.h
+      - name: Build the static library
+        run: |
+          touch crates/vikshep-capi/src/lib.rs  # force rustc to run (and print) even with a restored cache
+          cargo rustc --release --locked -p vikshep-capi --lib -- --print native-static-libs 2> build.log || { cat build.log; exit 1; }
+          sed -n 's/.*native-static-libs: //p' build.log | head -n 1 > native-libs.txt
+          echo "native libraries: $(cat native-libs.txt)"
+          test -s native-libs.txt
+      - name: C smoke test, C example, C++ example
+        run: |
+          LIBS="$(cat native-libs.txt)"
+          LIB=target/release/libvikshep_capi.a
+          cc -std=c99 -Wall -Wextra -Werror -pedantic -Iinclude crates/vikshep-capi/c/abi_smoke.c "$LIB" $LIBS -o abi_smoke
+          cc -std=c99 -Wall -Wextra -Werror -pedantic -Iinclude examples/c/vikshep_example.c "$LIB" $LIBS -o c_example
+          c++ -std=c++17 -Wall -Wextra -Werror -pedantic -Iinclude examples/cpp/vikshep_example.cpp "$LIB" $LIBS -o cpp_example
           ./abi_smoke
+          ./c_example
+          ./cpp_example
+
+  # abi3 wheels of vikshep-compute (Python >= 3.10) for the five targets, kept
+  # as workflow artifacts (never published), each tested with pytest where it
+  # can run natively: byte equality with the conformance vectors and the API
+  # tests.
+  wheels:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux wheels build natively in the PyPA manylinux_2_28 images.
+          - { name: linux-x86_64, os: ubuntu-latest, target: x86_64, manylinux: "2_28", container: "quay.io/pypa/manylinux_2_28_x86_64", test: true }
+          - { name: linux-aarch64, os: ubuntu-24.04-arm, target: aarch64, manylinux: "2_28", container: "quay.io/pypa/manylinux_2_28_aarch64", test: true }
+          - { name: macos-arm64, os: macos-14, target: aarch64, manylinux: "off", container: "", test: true }
+          - { name: macos-x86_64, os: macos-14, target: x86_64, manylinux: "off", container: "", test: false }
+          - { name: windows-x86_64, os: windows-latest, target: x64, manylinux: "off", container: "", test: true }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Build the wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          container: ${{ matrix.container }}
+          rust-toolchain: "1.97.0"
+          working-directory: crates/vikshep-py
+          args: --release --locked --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.name }}
+          path: crates/vikshep-py/dist/*.whl
+          if-no-files-found: error
+      - name: Test the wheel (pytest)
+        if: matrix.test
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy pytest jsonschema
+          python -m pip install --no-index --find-links crates/vikshep-py/dist vikshep-compute
+          python -m pytest -q crates/vikshep-py/tests
 
   # Throughput baseline (measurement only). Manual trigger: Actions ->
   # CI -> Run workflow. Results are recorded in STATUS.md by hand.

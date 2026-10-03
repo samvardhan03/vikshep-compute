@@ -31,11 +31,18 @@ Dependencies keep their own licences. Current direct dependencies:
 | `rayon` 1.12.0 | MIT OR Apache-2.0 | parallelism across independent units (CPU backend canvases, filter construction, dCorr2 rows) |
 | `serde` 1.0.229, `serde_json` 1.0.151, `toml` 1.1.6 | MIT OR Apache-2.0 | conformance runner (case definitions, vectors, reports); `serde_json` also reads test fixtures |
 | `criterion` 0.8.2 (benchmarks only) | MIT OR Apache-2.0 | throughput measurement |
+| `pyo3` 0.29.3 | MIT OR Apache-2.0 | Python bindings (`vikshep-py`, feature `python`) |
+| `numpy` 0.29.0 (Rust crate) | BSD-2-Clause | numpy arrays in the Python bindings |
+| `libc` 0.2.190 | MIT OR Apache-2.0 | POSIX shared memory in `vikshep-mcp` (Unix only) |
+
+The Python package `vikshep-compute` depends at run time on numpy
+(BSD-3-Clause), which is installed separately and not bundled.
 
 Tools, not dependencies: cbindgen 0.29.4 (MPL-2.0) generates
-`include/vikshep_backend.h` (the generated header is covered by this
-repository's AGPL-3.0-or-later licence, like the Rust source it is generated
-from).
+`include/vikshep_backend.h` and `include/vikshep.h` (the generated headers are
+covered by this repository's AGPL-3.0-or-later licence, like the Rust source
+they are generated from); maturin (MIT OR Apache-2.0) builds the Python
+wheels.
 
 The Morlet filter parameterization of `vikshep-scatter` follows Kymatio 0.3.0
 (BSD-3-Clause, Copyright (c) 2018-, The Kymatio developers); the formulas
@@ -59,7 +66,13 @@ with numpy, generate the parity fixture `oracles/python_disco/fixtures.json`
 ECMAScript number-formatting fixture
 `crates/vikshep-numerics/tests/fixtures/ecmascript_numbers.txt`
 (`oracles/jcs_numbers/gen.sh`); the canonical-JSON tests include the sample
-values of RFC 8785 Appendix B.
+values of RFC 8785 Appendix B; pytest and jsonschema (MIT) run the Python
+tests.
+
+The tool input fields of `vikshep-mcp` mirror `contract/mcpSchemas.ts` of the
+public Vikshep repository (same copyright holder); the protocol follows the
+published Model Context Protocol and JSON-RPC 2.0 specifications. No code
+from them is included.
 
 ## Contributions
 

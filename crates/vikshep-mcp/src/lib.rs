@@ -1,11 +1,11 @@
-//! Model Context Protocol server exposing deterministic Vikshep compute.
+//! The open MCP data plane of Vikshep (`docs/mcp.md`): a Model Context
+//! Protocol server speaking JSON-RPC 2.0 over stdio, one message per line,
+//! with the tools `compute_scattering`, `reduce`, `compare` and
+//! `detect_anomaly`. Tensors cross process boundaries only as 28-hex OIDs
+//! naming POSIX shared-memory segments (a file-backed store on Windows).
 //!
-//! Placeholder created by milestone C0; no functionality yet.
+//! This crate makes no network connections, collects no telemetry and has
+//! no licence checks.
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn crate_identity() {
-        assert_eq!(env!("CARGO_PKG_NAME"), "vikshep-mcp");
-    }
-}
+pub mod server;
+pub mod store;

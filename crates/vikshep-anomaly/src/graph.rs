@@ -131,15 +131,19 @@ impl AnomalyIndex {
         sw1(&self.reference[a], &self.reference[b])
     }
 
+    /// The `k` nearest references of `query` as `(reference id, SW1)`,
+    /// ordered by `(distance, id)` (HNSW search, VDS-1 section 19.3).
+    pub fn knn(&self, query: &Cloud, k: usize) -> Result<Vec<(usize, f64)>, AnomalyError> {
+        let pq = self.directions.project(query)?;
+        Ok(self.hnsw.knn(&|j| sw1(&pq, &self.reference[j]), k))
+    }
+
     /// Flag each query by its `k`-th nearest reference.
     pub fn detect(&self, queries: &[Cloud]) -> Result<Vec<Detection>, AnomalyError> {
         queries
             .iter()
             .map(|q| {
-                let pq = self.directions.project(q)?;
-                let nn = self
-                    .hnsw
-                    .knn(&|j| sw1(&pq, &self.reference[j]), self.config.k);
+                let nn = self.knn(q, self.config.k)?;
                 Ok(detection(&nn, self.config.k, self.config.tau))
             })
             .collect()

@@ -1,6 +1,6 @@
 [package]
 name = "vikshep-py"
-description = "Python bindings"
+description = "Python bindings (distribution vikshep-compute, module vikshep_compute)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,12 +9,29 @@ authors.workspace = true
 repository.workspace = true
 publish.workspace = true
 
-[dependencies]
+[lib]
+name = "vikshep_py"
+crate-type = ["cdylib", "rlib"]
 
-# This crate does not inherit the workspace lint table: it will contain a
-# foreign-function interface, which cannot be written without `unsafe`, so
-# `unsafe_code = "forbid"` (workspace default) cannot apply. Instead every
-# unsafe operation must sit in an explicit, documented `unsafe` block.
+[features]
+# Enabled by maturin (pyproject.toml); builds the extension module.
+python = ["dep:pyo3", "dep:numpy", "pyo3/abi3-py310", "pyo3/extension-module"]
+
+[dependencies]
+vikshep-anomaly.workspace = true
+vikshep-conformance-core.workspace = true
+vikshep-cpu.workspace = true
+vikshep-numerics.workspace = true
+vikshep-scatter.workspace = true
+vikshep-stats.workspace = true
+vikshep-train.workspace = true
+pyo3 = { workspace = true, optional = true }
+numpy = { workspace = true, optional = true }
+
+# This crate does not inherit the workspace lint table: it contains a
+# foreign-function interface (PyO3), whose generated code needs `unsafe`, so
+# `unsafe_code = "forbid"` (workspace default) cannot apply. Hand-written
+# unsafe operations must sit in explicit, documented `unsafe` blocks.
 [lints.rust]
 unsafe_code = "allow"
 unsafe_op_in_unsafe_fn = "deny"

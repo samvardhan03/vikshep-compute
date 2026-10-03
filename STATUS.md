@@ -1,7 +1,8 @@
 # Status
 
-Current milestone: **C2** (deterministic statistics, exact DisCo training,
-calibration, anomaly search). Next: **C3a**.
+Current milestone: **C3a** (Python wheels, C ABI, open MCP data plane,
+provenance schema). Next: **C3b** in `samvardhan03/Vikshep`, and **B1**,
+**B2**, **D1** in the private engine repository.
 
 ## C0 (complete)
 
@@ -37,52 +38,119 @@ Kymatio oracle (20 configurations within the stated tolerance) and the exact
 power-of-two homogeneity property. Open item carried forward: per-runner
 throughput from the manual `bench` CI job.
 
-## C2 checklist
+## C2 (complete)
 
-### A. `vikshep-stats`
-- [x] Weighted dCorr2, exact statistic (VDS-1 section 16.1.1): Szekely-Rizzo with every mean weighted, O(n^2) time and O(n) memory per row, rows in parallel and combined in index order
-- [x] Chunked estimator (16.1.2), labelled an estimator in code and spec: chunks of `min(4096, floor(n/2))` events from a Philox permutation; `weighted_dcorr2` switches to it above n = 10000
-- [x] Exact analytic gradient of dCorr2 with respect to the scores (16.2); derivation in `docs/disco_gradient.md`; verified against central finite differences
-- [x] Pearson-proxy gradient kept as the explicitly requested fast mode `gradient = "pearson_proxy"` (16.2.1), labelled as such
-- [x] JSD with fixed-range binning (reference min/max, 20 equal-width bins by default), `0 ln 0 = 0`, nats (16.3)
-- [x] Cut at a target signal efficiency and the Asimov significance, labelled "Asimov proxy, not a Wilks fit" in code, spec, `report.json` and `report.md` (16.4, 16.5)
-- [x] Lambda-frontier rows and the benchmark report: `report.json` (RFC 8785) and `report.md` with the win condition Delta-sigma > 0 AND Delta-JSD <= 0 versus the lambda = 0 baseline, printed TRUE or FALSE (16.6, 16.7)
+Gate met: PR [#2](https://github.com/samvardhan03/vikshep-compute/pull/2)
+merged (commit 6610961). CI run
+[37122315966](https://github.com/samvardhan03/vikshep-compute/actions/runs/37122315966)
+on the PR head and run
+[37122321702](https://github.com/samvardhan03/vikshep-compute/actions/runs/37122321702)
+on `main` passed every job, including the suite (331 cases, Tier-2 outputs
+and benchmark reports included) on all four OS legs and `hash-diff`.
 
-### B. `vikshep-train`
-- [x] Logistic head and a one-hidden-layer tanh MLP head of configurable width (17.2); initialization from Philox
-- [x] Per-epoch Philox shuffle and consecutive minibatches (17.6); Adam with documented constants and no `powf` (17.5); sigmoid, tanh and softplus via detmath `exp`/`ln` (17.3)
-- [x] DisCo loss `wBCE + lambda dCorr2_w(yhat, m | background)` with the exact gradient (17.4); training on frozen features (C1 r2 ratios via `features_from_r2`, or user columns)
-- [x] Lambda sweep producing the frontier and the benchmark report (17.7); synthetic benchmark sample with a sculpting feature (17.8)
-- [x] Calibration: closed-form ridge with a deterministic Cholesky (fixed loop order, binary64), residual tensor with OID and calibration constants as canonical JSON (section 18)
+C2 delivered `vikshep-stats` (weighted dCorr2 exact and chunked, its exact
+gradient, JSD, the Asimov proxy, the lambda frontier and the benchmark
+report with its TRUE/FALSE win condition), `vikshep-train` (logistic and MLP
+heads, DisCo training with Adam, ridge calibration), `vikshep-anomaly` (SW1,
+deterministic HNSW, graph output contract), parity with the public Python
+metric, 18 Tier-2 conformance cases and VDS-1 sections 15 to 19
+(`tier2_version = 1`).
 
-### C. `vikshep-anomaly`
-- [x] Sliced Wasserstein-1 between fingerprint distributions (19.1, 19.2): per-position log-coefficient point clouds (their mean is the C1 log-mean fingerprint), Philox unit directions, exact 1-D W1 by merging sorted samples, pairwise mean over directions
-- [x] Deterministic HNSW (19.3): single-threaded insertion in input order, levels from Philox, `(distance, id)` ordering everywhere, `M = 8`, `ef_construction = 64`, `ef_search = 32` by default, canonical graph bytes
-- [x] Detection by k-th nearest reference distance above `tau`, leave-one-out on the reference set (19.4)
-- [x] Fixed-iteration Fruchterman-Reingold layout seeded from Philox (19.5)
-- [x] Output contract (19.6): `nodes [{id, x, y, flagged}]`, `edges [{i, j, sw1}]`, `tau`, `config_digest`, `numerics_version` (and `tier2_version`); no features or fingerprints leave the core
+## C3a checklist
 
-### D. Python parity
-- [x] `oracles/python_disco/gen_fixtures.py` runs the public Vikshep `weighted_dcorr2`, `_pearson_dcorr2_grad` and `train_calibrate` on the inputs of `backend/ingest/tests/test_disco.py` (same seeds and constructions); fixtures committed as exact bit patterns
-- [x] Every original Python assertion re-checked on the Rust values (independent variables near 0; `Y = X^2` with symmetric `X` large; weighted and unweighted diverge on skewed weights; and the remaining cases of the file); Rust matches Python within the stated tolerance (VDS-1 section 12.4)
+### A. Python package (`crates/vikshep-py`, PyO3 0.29 + maturin)
+- [x] Distribution `vikshep-compute`, import `vikshep_compute` (extension module `vikshep_compute._core`); the name `vikshep` is not used
+- [x] abi3 wheels for Python 3.10 and later; numpy arrays plus OIDs: `scatter(batch, config) -> (coeffs, oid)`, `r2`, `fingerprint`, `dcorr2_w(x, y, w)`, `train_tag`, `calibrate`, `anomaly_index`, `anomaly_query`, `bench_report`, `provenance_manifest`, `conformance_selftest(subset="quick")`; also `scatter_paths`, `fingerprint_clouds`, `synthetic_dataset`, `oid`, `TaggerModel`, `AnomalyIndex`
+- [x] Inputs converted with numpy and copied element by element into Rust-owned contiguous row-major buffers before compute (VDS-1 section 20.1); tested with Fortran-ordered, strided, big-endian, float64 and list inputs (identical OIDs)
+- [x] pytest: byte equality with `conformance/vectors/v1` for 6 scattering cases (S, r2, log_mean), the 4 training cases (model, scores) and the 2 benchmark reports (report.json, report.md); manifests validated against the schema
+- [x] CI `wheels` job: Linux x86_64 and aarch64 (manylinux_2_28), macOS arm64 and x86_64 (cross-compiled on arm64), Windows x86_64; wheels kept as artifacts, not published; pytest on every target that can run natively
+- [ ] Wheels build and pytest passes on all five targets in CI (first run on the C3a PR)
 
-### E. Conformance additions
-- [x] 18 `[[tier2]]` cases (VDS-1 section 11.5): dCorr2 exact (weighted and unweighted) and chunked, gradient, Pearson proxy, JSD, four small training runs (logistic and MLP, exact and proxy), calibration, SW1 matrix, HNSW graph bytes plus flags and graph JSON, two benchmark reports (JSON and Markdown bytes)
-- [x] Suite v1 now 331 cases; the 313 C1 cases are unchanged; all run in every CI OS leg and in `hash-diff`
+### B. C ABI (`crates/vikshep-capi`)
+- [x] Stable functions in `include/vikshep.h` (cbindgen): `vksp_scatter`, `vksp_r2`, `vksp_fingerprint`, `vksp_provenance_manifest`, `vksp_conformance_selftest`, `vksp_version_info`, plus `vksp_config_1d/2d`, `vksp_scatter_info`, `vksp_oid`, `vksp_last_error`, `vksp_status_string`
+- [x] Status codes, no panics across the boundary (`catch_unwind` on every export, including the CPU kernel table), caller-allocated output buffers with size queries
+- [x] `examples/c/vikshep_example.c` and `examples/cpp/vikshep_example.cpp`, compiled with `-Werror -pedantic` and run in CI (`c-abi` job, Linux and macOS)
+- [x] `vksp_register_backend` / `vksp_unregister_backend` in `include/vikshep_backend.h`: a host is handed an external `VkspBackendV1` and uses it by name in every host function, including the conformance self-test; `docs/external_backends.md` documents how a proprietary CUDA or Metal backend plugs in without this repository containing it
+- [ ] C and C++ examples build and run in CI (first run on the C3a PR)
 
-### F. Spec and status
-- [x] VDS-1 sections 15 (Tier-2 determinism rules), 16 (statistics), 17 (training), 18 (calibration), 19 (anomaly search); sections 9.3, 10.1, 11, 12.3 to 12.5 extended
-- [x] `numerics_version` stays 1 (Tier-1 arithmetic untouched); `tier2_version = 1` versions sections 15 to 19 independently (section 10.1)
-- [x] Canonical JSON (RFC 8785) moved to `vikshep_numerics::jcs` with ECMAScript number formatting, checked against Node.js; the C1 manifests use it unchanged
+### C. MCP data plane (`crates/vikshep-mcp`)
+- [x] JSON-RPC 2.0 over stdio, line-delimited; MCP handshake (`initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`); tools `compute_scattering`, `reduce`, `compare`, `detect_anomaly` with the contract's input field names
+- [x] Inputs by OID from POSIX shared memory (name `/<oid>`); outputs written to new segments named by their OIDs; responses carry OIDs and small JSON summaries; every segment read is checked against its OID
+- [x] Windows: file-backed store, one file per OID in `<temp dir>/vikshep-shm` (or `$VIKSHEP_SHM_DIR`), documented in `docs/mcp.md`; selectable on every platform with `--store file`
+- [x] Integration test (`tests/stdio.rs`): spawns the binary, writes a conformance input tensor, and checks that the output OIDs of `compute_scattering` and `reduce` equal the conformance vectors (1-D zero-padded and 2-D `so2_relative` cases), plus `compare`, `detect_anomaly`, errors and segment cleanup; default store (shared memory on Linux and macOS, files on Windows) and file store
+- [x] Every tool result includes `numerics_version`, `tier2_version` and the provenance `manifest_hash` (pinned in the test, platform independent)
+- [ ] MCP integration test passes in CI on Linux and macOS (shared memory) and Windows (file store) (first run on the C3a PR)
+
+### D. Provenance manifest
+- [x] `spec/provenance.schema.json` (JSON Schema 2020-12): inputs (OID, dtype, shape), config, filter-bank SHA3, `numerics_version`, `tier2_version`, seeds, outputs, execution (backend name and version, platform triple, executor `local|cloud`, wall clock) and `manifest_hash`
+- [x] Hashed subset specified (VDS-1 section 9.3): everything except `execution` and `manifest_hash`, so wall-clock times, backend, platform and executor never change the hash
+- [x] One implementation (`vikshep_numerics::provenance`) behind the Rust, C, Python and MCP manifests
+
+### E. Docs and status
+- [x] README quickstart for Python and C/C++ (and the MCP binary); VDS-1 section 20 (bindings and data plane), sections 9.3, 11.2, 11.3, 14.9, 14.10 updated; `docs/mcp.md`, `docs/external_backends.md`
+- [x] Nothing tagged, nothing published
 - [x] STATUS updated
 
-### Gate C2
-- [x] All Tier-2 outputs bit-identical locally: suite v1 (331 cases) passes with byte-identical reports on x86_64 Linux (native; `cpu`, `cpu-serial`, `capi-cpu`), AArch64 Linux (qemu-user) and x86_64 Windows (MinGW build under Wine)
-- [ ] Bit-identical in CI on Linux x86_64, Linux arm64, macOS arm64, Windows x86_64 (`hash-diff` on the C2 PR)
-- [x] Exact DisCo gradient verified by central finite differences
-- [x] Python-parity tests pass
-- [x] Benchmark report bytes identical across platforms for the same inputs and seed (conformance cases `tier2/report/*`, locally on the three platforms above)
+### Gate C3a
+- [x] Locally: wheel builds (Linux x86_64) and pytest passes (21 tests, Python 3.10 and 3.11); C and C++ examples build and run (Linux); MCP integration test passes with POSIX shared memory and the file store (Linux) and with the file store under Wine (Windows build)
+- [ ] Wheels build for all five targets in CI
+- [ ] pytest byte equality with the conformance vectors passes in CI
+- [ ] C and C++ examples build and run in CI
+- [ ] MCP integration test passes on Linux and macOS, file-backed fallback passes on Windows, in CI
+- [x] Provenance schema committed
 - [ ] PR open
+
+## Contract notes (`contract/mcpSchemas.ts`, public Vikshep commit 7882dfc)
+
+Field names are mirrored exactly. What numerics_version 1 cannot support is
+rejected with a tool error rather than renamed:
+
+| Field | Contract | Supported here |
+|---|---|---|
+| `ScatterCfg.dim` | `"1"`, `"2"`, `"3"` | `"1"`, `"2"`; `"3"` rejected (no 3-D scattering in VDS-1) |
+| `ScatterCfg.order` | 1 to 3 | 1, 2; 3 rejected |
+| `ScatterCfg.group` | `trivial`, `so2`, `so3` | `trivial`; `so2` = `so2_relative` (2-D only); `so3` rejected |
+| `ScatterCfg.J` | 1 to 14 | 1 to 11 (canvas limit 4096) |
+| `ScatterCfg.L` | 1 to 16 | 1 in 1-D; even values 2 to 16 in 2-D |
+| `ScatterCfg.Q` | 1 to 32 | 1 to 32 in 1-D; 1 in 2-D |
+| `ScatterCfg.dim_shape` | positive integers | 1-D: `[]` (one signal of `signal_len`) or `[n]` (a batch); 2-D: `[rows, cols]` |
+| pad policy | no field | server option `--pad` (default `zero_pad`), recorded in each manifest |
+| `ReduceInput.method` | `mean`, `std`, `log_mean`, `ratio` | all four (VDS-1 sections 14.8, 14.9) |
+| `CompareInput`, `DetectAnomalyInput` | `query_oid`, `k`, `tau` | as specified; the reference library is the session's earlier coefficient tensors with the same configuration (VDS-1 section 20.3) |
+
+The contract file defines input schemas, not tool names. The tools are
+named `compute_scattering`, `reduce`, `compare`, `detect_anomaly`; the
+public agent's recipes call the reduce step `reduce_scattering`, which the
+server accepts as an alias. `reduce`, `compare` and `detect_anomaly` accept
+OIDs produced by the same server process (they need the configuration and
+shape the server recorded); `IngestG4Input`, `WellSliceInput` and
+`FeaturizeWellInput` belong to the ingest side and are not part of this
+data plane.
+
+## Fix carried in C3a
+
+A scattering conformance case whose group is `so2_relative` failed when run
+on its own (`vikshep-conformance run --only ...`): the C1 runner took its
+input from the cached coefficients of the trivial-group case. The input is
+now drawn from the trivial variant's stream by rule (VDS-1 section 11.2);
+the full report and every vector are unchanged, and a test runs a pooled
+case in isolation. The suite library moved to `vikshep-conformance-core`
+(the `vikshep-conformance` command is unchanged) so that the C ABI and the
+Python module can run the self-test.
+
+## Decisions taken in C3a
+
+| Decision | Outcome |
+|---|---|
+| Manifest hash | SHA3-256 of the canonical manifest without `execution` and `manifest_hash`: identical for the same computation on every backend, platform and executor |
+| Wall clock | `started_unix_ms` / `finished_unix_ms` integers inside `execution` (not hashed); `null` when not recorded |
+| Tensor store | segment named by OID holding the raw bytes; shape and dtype in messages; readers verify the hash over the implied length (covers macOS page rounding) |
+| Windows store | one file per OID, written to a temporary name and renamed |
+| Segment lifetime | the MCP server removes the segments it created at end of input unless `--keep-segments` |
+| Reference library | session coefficient tensors with the same configuration, per event, in order of first computation, excluding the query |
+| C API config | `VkspScatterConfig` with `struct_size`; helpers for 1-D and 2-D defaults |
+| Python build | PyO3 behind the crate feature `python` (enabled by maturin) so workspace tests never link Python; wheels stripped |
+| Embedded vectors | `expected.json` and `expected.bin` compiled into the C library and the wheel (about 1.5 MB) |
 
 ## Decisions taken in C2
 
@@ -116,6 +184,19 @@ detmath accuracy (VDS-1 section 4.3):
 | `ln` | 1 (4 / 2006) | 0 (0 / 2006) |
 | `sin` | 1 (41 / 2009) | 1 (1 / 2009) |
 | `cos` | 1 (39 / 2009) | 0 (0 / 2009) |
+
+C3a local checks (Linux x86_64 container unless stated):
+
+| Check | Result |
+|---|---|
+| Wheel `vikshep_compute-0.1.0-cp310-abi3` (manylinux, x86_64, stripped) | builds; 1.9 MB |
+| pytest (`crates/vikshep-py/tests`) | 21 passed on Python 3.10 and 3.11 |
+| Source install `pip install ./crates/vikshep-py` | builds and imports |
+| C smoke test, C example, C++ example (`-Werror -pedantic`) | build and run; the forwarding backend gives the CPU reference's OID |
+| Quick self-test (`vksp_conformance_selftest`, 185 cases) | 0 failures; two runs in 0.15 s including process start |
+| MCP integration test, POSIX shared memory and file store | 3 / 3 passed; no segment left in `/dev/shm` |
+| MCP integration test, Windows build (`x86_64-pc-windows-gnu`) under Wine | 3 / 3 passed with the default file store; same pinned manifest hash |
+| Python `SharedMemory(name=oid)` producer with `vikshep-mcp` | output OID equals `vikshep_compute.scatter` |
 
 Cross-platform conformance (suite v1, 331 cases), reports byte-identical:
 
@@ -169,6 +250,7 @@ batch of 1,000 events, CPU reference):
 |---|---|---|
 | cloud container, 4 vCPU Intel Xeon @ 2.10 GHz, Linux x86_64 | 2026-10-02 | 48.6 (criterion interval 47.9 to 49.3) |
 
-## Next: C3a
+## Next
 
-Per the C3a prompt.
+* **C3b** in `samvardhan03/Vikshep`: per the C3b prompt.
+* **B1**, **B2**, **D1** in the private engine repository: per their prompts.

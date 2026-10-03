@@ -8,6 +8,12 @@
  * pointers after returning. VkspComplex32 is { float re; float im; },
  * 8 bytes, alignment 4. Calls are synchronous. See the crate documentation
  * of vikshep-capi and spec/VDS-1.md section 14.6.
+ *
+ * vksp_register_backend() hands an external table (for example a CUDA or
+ * Metal backend built outside this repository) to the library, which then
+ * uses it by name in every host function of vikshep.h; see
+ * docs/external_backends.md. The status codes below are shared with
+ * vikshep.h.
  */
 
 #ifndef VIKSHEP_BACKEND_H
@@ -27,6 +33,21 @@
 
 // The device failed.
 #define VKSP_DEVICE_ERROR 2
+
+// An output buffer is too small; the required size was written.
+#define VKSP_BUFFER_TOO_SMALL 3
+
+// No backend is registered under the requested name.
+#define VKSP_UNKNOWN_BACKEND 4
+
+// A backend with that name is already registered (or the name is reserved).
+#define VKSP_ALREADY_REGISTERED 5
+
+// The conformance self-test ran and at least one case failed.
+#define VKSP_CONFORMANCE_FAILED 6
+
+// Internal error (a caught Rust panic); nothing unwound across the boundary.
+#define VKSP_INTERNAL_ERROR 7
 
 // Backend capabilities.
 typedef struct VkspCapabilities {
@@ -125,6 +146,28 @@ extern "C" {
 
 // The CPU reference backend as a C table. Call `destroy` when done.
 struct VkspBackendV1 vksp_cpu_backend_v1(void);
+
+// Hand an external backend to this library. The table is copied; on
+// success the library owns it and calls `destroy` (if non-null) when the
+// backend is unregistered and no call is using it. On failure the caller
+// keeps ownership. The backend is then available by its `name()` to every
+// host function that takes a backend name (`vikshep.h`). Calls into one
+// registered backend are serialized by the library.
+//
+// Requirements: `abi_version == VKSP_ABI_VERSION`, all five kernels and
+// `name`/`numerics_version` non-null, `numerics_version()` equal to the
+// library's, a name of 1 to 64 bytes other than `cpu` and not yet registered.
+//
+// # Safety
+// `table` must point to a table whose non-null function pointers implement
+// the documented contract for its `ctx`.
+int32_t vksp_register_backend(const struct VkspBackendV1 *table);
+
+// Remove a registered backend. Its `destroy` runs once no call is using it.
+//
+// # Safety
+// `name` must be a NUL-terminated string.
+int32_t vksp_unregister_backend(const char *name);
 
 #ifdef __cplusplus
 }  // extern "C"

@@ -4,11 +4,20 @@
 //! * [`rng`]: SplitMix64 and Philox4x32-10 streams (VDS-1 section 5).
 //! * [`oid`]: canonical tensor hashing (VDS-1 section 9).
 //! * [`sum`]: fixed-order (pairwise) summation for host reductions.
+//! * [`order`]: total-order sorting with index tie-break.
+//! * [`jcs`]: RFC 8785 canonical JSON, including number formatting.
 
 pub mod fft;
+pub mod jcs;
 pub mod oid;
+pub mod order;
 pub mod rng;
 pub mod sum;
 
 /// Current numerics version (VDS-1 section 10).
 pub const NUMERICS_VERSION: u32 = 1;
+
+/// Version of the Tier-2 algorithms of VDS-1 sections 15 to 19 (statistics,
+/// training, calibration, anomaly search), versioned independently of the
+/// Tier-1 arithmetic (VDS-1 section 10.1).
+pub const TIER2_VERSION: u32 = 1;

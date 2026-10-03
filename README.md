@@ -31,20 +31,26 @@ and must reproduce this reference bit for bit.
 
 ## Status
 
-Milestone C0 (foundation): workspace, specification, portable math,
-random numbers, determinism lint, cross-platform CI. The FFT and scattering
-transform arrive in milestone C1. See [`STATUS.md`](STATUS.md).
+Milestone C1 (reference scattering core): Stockham FFT, Kymatio-parameterized
+Morlet filter banks, the order-0/1/2 cascade with SO(2) pooling, r2 and
+log-mean reductions, the backend interface with its C ABI, and conformance
+suite v1. Next: C2. See [`STATUS.md`](STATUS.md).
 
 ## Layout
 
-| Crate | Role |
+| Path | Role |
 |---|---|
-| `vikshep-detmath` | portable `exp`, `ln`, `sin`, `cos` (the only source of transcendental functions) |
-| `vikshep-numerics` | SplitMix64 and Philox4x32-10 streams, OIDs; FFT from C1 |
-| `vikshep-conformance` | conformance runner (binary) |
-| `vikshep-scatter`, `vikshep-stats`, `vikshep-train`, `vikshep-anomaly` | scattering and Tier-2 analysis (placeholders) |
-| `vikshep-backend-api`, `vikshep-cpu` | backend interface and CPU reference backend (placeholders) |
-| `vikshep-py`, `vikshep-capi`, `vikshep-mcp` | Python, C and MCP interfaces (placeholders) |
+| `crates/vikshep-detmath` | portable `exp`, `ln`, `sin`, `cos` (the only source of transcendental functions) |
+| `crates/vikshep-numerics` | Stockham FFT and twiddle tables, SplitMix64 and Philox4x32-10 streams, OIDs, fixed-order sums |
+| `crates/vikshep-scatter` | configuration, filter banks, cascade driver, pooling, r2, log-mean, provenance manifests |
+| `crates/vikshep-backend-api` | the `ScatterBackend` trait: the five Tier-1 kernels |
+| `crates/vikshep-cpu` | CPU reference backend |
+| `crates/vikshep-capi` | C ABI of the backend interface; header in `include/vikshep_backend.h` |
+| `crates/vikshep-conformance` | conformance runner (binary) |
+| `crates/vikshep-stats`, `-train`, `-anomaly`, `-py`, `-mcp` | placeholders for later milestones |
+| `conformance/` | suite definition (`cases.toml`) and expected vectors |
+| `oracles/` | Kymatio oracle script and fixtures (developer-run) |
+| `spec/VDS-1.md` | the specification |
 
 ## Building and testing
 
@@ -56,20 +62,38 @@ cargo test --workspace
 scripts/determinism-lint.sh
 ```
 
-## Conformance hashes
+## Example
 
-```sh
-cargo run --release -p vikshep-conformance -- hashes   # print the report (JSON)
-cargo run --release -p vikshep-conformance -- check    # compare with conformance/vectors/v1
+```rust
+use vikshep_cpu::CpuBackend;
+use vikshep_scatter::{Group, PadPolicy, ScatterConfig, Scattering};
+use vikshep_scatter::reduce::{log_mean, r2};
+
+let cfg = ScatterConfig::two_d(64, 64, 3, 8, [PadPolicy::Circular; 2], Group::Trivial);
+let sc = Scattering::new(cfg.clone())?;
+let image = vec![0.0f32; 64 * 64];
+let s = sc.run(&CpuBackend::new(), &image)?;   // [1, 217, 8, 8] binary32
+let ratios = r2(&s, cfg.carrier_cutoff);
+let fingerprint = log_mean(&s);
 ```
 
-The report contains the SHA3-256 of one million outputs of every portable
-math function and of every random stream (VDS-1 sections 4.4 and 5.6). CI
-produces it on Linux x86_64, Linux AArch64, macOS arm64 and Windows x86_64
-and fails if any report differs from the committed vectors.
+## Conformance
+
+```sh
+cargo run --release -p vikshep-conformance -- run --backend cpu   # full suite v1, JSON report
+cargo run --release -p vikshep-conformance -- hashes              # C0 determinism sweeps
+cargo run --release -p vikshep-conformance -- generate            # regenerate vectors (CPU reference)
+```
+
+Suite v1 has 313 cases: FFTs for N = 2..4096, the element-wise kernels,
+1-D and 2-D scattering grids with adversarial inputs, and the portable-math
+and random-stream sweeps (VDS-1 section 11). CI runs it on Linux x86_64,
+Linux AArch64, macOS arm64 and Windows x86_64 and fails if any case fails or
+any platform's report differs.
 
 ## Licence
 
-Code: AGPL-3.0-or-later. `spec/` and `conformance/vectors/`: CC-BY-4.0. A
+Code: AGPL-3.0-or-later. `spec/`, `conformance/cases.toml` and
+`conformance/vectors/`: CC-BY-4.0. A
 commercial licence for the code is available from the copyright holder. See
 [`LICENSING.md`](LICENSING.md).

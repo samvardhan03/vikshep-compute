@@ -1,3 +1,5 @@
 # LF everywhere: conformance vectors and fixtures are compared byte for byte
 # on every platform, including Windows checkouts.
 * text=auto eol=lf
+# Binary conformance vectors.
+*.bin binary

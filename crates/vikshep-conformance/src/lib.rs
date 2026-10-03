@@ -1,12 +1,16 @@
 //! VDS-1 conformance cases.
 //!
-//! At this milestone (C0) the suite contains the cross-platform determinism
-//! sweeps of `spec/VDS-1.md` sections 4.3 and 5.5: hashes of one million
-//! outputs of every `vikshep-detmath` function and of the random streams.
-//! Milestone C1 adds FFT and scattering cases.
+//! * The cross-platform determinism sweeps of `spec/VDS-1.md` sections 4.4
+//!   and 5.6 (this module): hashes of one million outputs of every
+//!   `vikshep-detmath` function and of the random streams.
+//! * Conformance suite v1 ([`suite`]): FFT, kernel and scattering cases
+//!   expanded from `conformance/cases.toml`, with expected vectors in
+//!   `conformance/vectors/v1/`. The sweeps are part of it as `sweep/*` cases.
 //!
 //! The sweep definitions below are normative: they are reproduced in the
 //! specification, and any change to them is a change of conformance vectors.
+
+pub mod suite;
 
 use vikshep_numerics::NUMERICS_VERSION;
 use vikshep_numerics::oid::{hex, sha3_256};
@@ -219,11 +223,17 @@ pub const CASES: &[Case] = &[
     },
 ];
 
-/// Run one case and return the lowercase hex SHA3-256 of its output bytes.
+/// Run one sweep and return its output bytes.
+#[must_use]
+pub fn case_bytes(case: &Case) -> Vec<u8> {
+    let mut stream = Stream::new(SWEEP_SEED, case.stream_id);
+    (case.run)(&mut stream)
+}
+
+/// Run one sweep and return the lowercase hex SHA3-256 of its output bytes.
 #[must_use]
 pub fn case_hash(case: &Case) -> String {
-    let mut stream = Stream::new(SWEEP_SEED, case.stream_id);
-    hex(&sha3_256(&(case.run)(&mut stream)))
+    hex(&sha3_256(&case_bytes(case)))
 }
 
 /// The `hashes` report: canonical JSON (sorted keys, two-space indent, LF

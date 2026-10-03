@@ -59,7 +59,8 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - run: cargo test --workspace --locked
 
-  hashes:
+  # Conformance suite v1 and the C0 determinism sweeps on every platform.
+  conformance:
     strategy:
       fail-fast: false
       matrix:
@@ -72,50 +73,113 @@ jobs:
         run: |
           rustc -vV
           uname -a || true
-      - name: Determinism-sweep hashes
+      - name: Conformance suite v1 (CPU reference)
         run: |
           mkdir -p out
+          cargo run --release --locked -p vikshep-conformance -- \
+            run --backend cpu --report "out/report-${{ matrix.os }}.json"
+      - name: Conformance suite v1 through the C ABI
+        run: |
+          cargo run --release --locked -p vikshep-conformance -- \
+            run --backend capi-cpu --report out/capi-report.json
+          cmp out/capi-report.json "out/report-${{ matrix.os }}.json"
+      - name: Determinism-sweep hashes
+        run: |
           cargo run --release --locked -p vikshep-conformance -- hashes > "out/hashes-${{ matrix.os }}.json"
           cat "out/hashes-${{ matrix.os }}.json"
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: hashes-${{ matrix.os }}
-          path: out/hashes-${{ matrix.os }}.json
+          name: conformance-${{ matrix.os }}
+          path: |
+            out/report-${{ matrix.os }}.json
+            out/hashes-${{ matrix.os }}.json
           if-no-files-found: error
 
   # Public, per-PR proof of cross-platform bit identity: every platform's
-  # report must equal the committed conformance vectors byte for byte (and
-  # therefore every other platform's report).
+  # conformance report must be identical and all-pass, and every sweep report
+  # must equal the committed vectors byte for byte.
   hash-diff:
-    needs: hashes
+    needs: conformance
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v4
         with:
-          pattern: hashes-*
+          pattern: conformance-*
           path: reports
           merge-multiple: true
       - name: Compare reports across platforms
         run: |
           set -euo pipefail
-          ref=conformance/vectors/v1/hashes.json
-          expected=4 # number of entries in the hashes matrix
+          expected=4 # number of entries in the conformance matrix
           shopt -s nullglob
-          reports=(reports/*.json)
+          reports=(reports/report-*.json)
+          sweeps=(reports/hashes-*.json)
           status=0
-          if [ "${#reports[@]}" -ne "$expected" ]; then
-            echo "expected $expected reports, found ${#reports[@]}"
+          if [ "${#reports[@]}" -ne "$expected" ] || [ "${#sweeps[@]}" -ne "$expected" ]; then
+            echo "expected $expected reports of each kind, found ${#reports[@]} and ${#sweeps[@]}"
             status=1
           fi
           for f in "${reports[@]}"; do
-            if cmp -s "$ref" "$f"; then
+            if ! jq -e '.summary.fail == 0 and .summary.pass == .summary.cases and .summary.cases > 0' "$f" > /dev/null; then
+              echo "FAILING CASES: $f"
+              jq '.summary' "$f" || true
+              status=1
+            fi
+            if cmp -s "${reports[0]}" "$f"; then
               echo "identical: $f"
             else
               echo "DIFFERS:   $f"
-              diff "$ref" "$f" || true
+              diff "${reports[0]}" "$f" || true
               status=1
             fi
           done
-          sha256sum "$ref" "${reports[@]}"
+          for f in "${sweeps[@]}"; do
+            if cmp -s conformance/vectors/v1/hashes.json "$f"; then
+              echo "identical: $f"
+            else
+              echo "DIFFERS:   $f"
+              diff conformance/vectors/v1/hashes.json "$f" || true
+              status=1
+            fi
+          done
+          sha256sum "${reports[@]}" "${sweeps[@]}"
           exit $status
+
+  # The committed C header matches the Rust source, and C code compiles and
+  # runs against it.
+  c-header:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: cargo install cbindgen --version =0.29.4 --locked
+      - run: >
+          cbindgen --verify --config crates/vikshep-capi/cbindgen.toml
+          --crate vikshep-capi --output include/vikshep_backend.h
+      - name: C smoke test
+        run: |
+          cargo build --release --locked -p vikshep-capi
+          cc -std=c99 -Wall -Wextra -Werror -pedantic -Iinclude crates/vikshep-capi/c/abi_smoke.c \
+            target/release/libvikshep_capi.a -lpthread -ldl -lm -o abi_smoke
+          ./abi_smoke
+
+  # Throughput baseline (measurement only). Manual trigger: Actions ->
+  # CI -> Run workflow. Results are recorded in STATUS.md by hand.
+  bench:
+    if: github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Runner
+        run: |
+          echo "runner: ${{ matrix.os }} date: $(date -u +%Y-%m-%d)"
+          nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "$NUMBER_OF_PROCESSORS"
+      - run: cargo bench --locked -p vikshep-scatter --bench scatter_2d

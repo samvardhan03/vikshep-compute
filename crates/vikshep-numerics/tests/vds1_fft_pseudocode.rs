@@ -254,3 +254,42 @@ fn delta_and_constant_are_exact() {
         assert!(spec[1..].iter().all(|v| v.re == 0.0 && v.im == 0.0));
     }
 }
+
+// ---------------------------------------------------------------------------
+// The production FFT (`vikshep_numerics::fft`) must equal the literal
+// transcription above bit for bit.
+
+use vikshep_numerics::fft::{self, Complex32, Direction, Real};
+
+fn to_c(v: &[C32]) -> Vec<Complex32> {
+    v.iter().map(|c| Complex32::new(c.re, c.im)).collect()
+}
+
+fn bits(v: &[Complex32]) -> Vec<(u32, u32)> {
+    v.iter().map(|c| (c.re.to_bits(), c.im.to_bits())).collect()
+}
+
+#[test]
+fn production_twiddles_equal_literal_construction() {
+    for m in 1..=12u32 {
+        assert_eq!(bits(f32::twiddles(m)), bits(&to_c(&twiddles(m))), "m={m}");
+    }
+}
+
+#[test]
+fn production_fft_equals_literal_recursion_bitwise() {
+    for m in 1..=12u32 {
+        let n = 1usize << m;
+        let input = test_signal(m, 101);
+        let (want, _) = forward(m, &input);
+        let mut got = to_c(&input);
+        let mut scratch = vec![Complex32::default(); n];
+        fft::fft_1d(&mut got, &mut scratch, Direction::Forward);
+        assert_eq!(bits(&got), bits(&to_c(&want)), "forward m={m}");
+
+        let want_inv = inverse(m, &want);
+        let mut got_inv = to_c(&want);
+        fft::fft_1d(&mut got_inv, &mut scratch, Direction::Inverse);
+        assert_eq!(bits(&got_inv), bits(&to_c(&want_inv)), "inverse m={m}");
+    }
+}

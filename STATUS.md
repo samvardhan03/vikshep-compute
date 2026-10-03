@@ -172,7 +172,12 @@ Python module can run the self-test.
 | JSON numbers | ECMAScript `Number::toString` (shortest round trip, ties to even); seeds as decimal strings; Markdown fixed six decimals |
 | Philox streams | registry in VDS-1 section 15.4 |
 
-Still open: D-FTZ (GPU measurements), D-SQRT, D-STEER (VDS-1 section 13).
+Open decisions (VDS-1 section 13): D-FTZ is closed as flush-to-zero by the
+VDS-1.1 text merged in PR #4 (section 8.1), which requires CPU emulation of
+flushing, `numerics_version` 2 and regenerated vectors; that implementation
+is not done yet, so the code and the conformance vectors are still the
+subnormal-preserving `numerics_version` 1. D-SQRT is closed for Metal and
+open for CUDA; D-STEER is open.
 
 ## Recorded measurements
 

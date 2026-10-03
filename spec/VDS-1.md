@@ -138,15 +138,26 @@ NaN that would be serialized MUST first be replaced by the canonical quiet NaN
   similar) MUST NOT be used; `__fadd_rn`/`__fmul_rn` MAY be used to block
   contraction.
 
-### 3.3 Metal (future private backend)
+### 3.3 Metal (private backend — settings verified 2026-10-03)
 
-- Fast math MUST be disabled (safe math mode), floating-point contraction
-  MUST be disabled, and only precise functions MAY be used.
-- The exact compiler options and source-level mechanism (for example
-  `-fno-fast-math` / `MTLCompileOptions` math mode settings, `precise::`
-  functions, and a contraction pragma) are to be verified on hardware and
-  recorded here by the Metal backend work. Until recorded, no Metal backend
-  can claim conformance.
+The following settings were verified on AMD Radeon Pro 555 (GCN 4th-gen,
+Metal 2, macOS 13.7.8) and confirmed accepted without error.
+
+- `MTLCompileOptions.fastMathEnabled = false` — disables fast-math
+  optimisations; accepted on macOS 13 / Metal 2.  On macOS 14+,
+  `MTLMathMode.safe` MUST be used instead (the deprecated flag is removed
+  in Sonoma and later).
+- `#pragma STDC FP_CONTRACT OFF` placed at the top of each `.metal` source
+  file (after `#include <metal_stdlib>`) — prevents compiler-induced FMA
+  contraction via Metal's LLVM backend; accepted on all tested platforms.
+- `precise::sqrt(x)` — requests IEEE-754 correctly rounded sqrt; verified
+  bit-exact vs. the CPU reference over 2^20 inputs (see D-SQRT, section 13).
+- AOT compilation via `xcrun metal -fno-fast-math` is NOT required and MUST
+  NOT be assumed; it requires full Xcode.  Runtime JIT via
+  `MTLDevice.makeLibrary(source:options:)` is the normative path and
+  accepts all required options.
+- `MTLMathMode` (macOS 14+ / Sonoma): replace `fastMathEnabled = false` with
+  `mathMode = .safe` on deployment targets of macOS 14 and later.
 
 ### 3.4 Host-built tables
 
@@ -521,22 +532,46 @@ host (Tier 2). Its tables `TW64_N` follow the construction above with every
 
 ## 8. Subnormals
 
-### 8.1 Decision D-FTZ: OPEN
+### 8.1 Decision D-FTZ: CLOSED — flush-to-zero
 
-Default for the CPU reference: IEEE subnormals are preserved (no
-flush-to-zero of inputs or outputs). Rust on x86_64 and AArch64 preserves
-subnormals by default and the reference never changes the floating-point
-environment.
+**Measurement (2026-10-03, `vikshep-compute-pro` B2 work, AMD Radeon Pro 555,
+GCN 4th-gen, Metal 2, macOS 13.7.8):**
 
-CPU observations (C1): `cpu_preserves_subnormals`
-(`crates/vikshep-scatter/tests/properties.rs`) checks that the FFT of a
-subnormal impulse is a constant subnormal spectrum, that the inverse
-scaling by `2^-m` produces the exact smaller subnormal, and that filter
-multiplication of subnormals is exact. The conformance cases with
-`near_subnormal` inputs (section 11.2: FFT, modulus, filter multiplication
-and scattering cases) produce subnormal intermediates and pass bit-exactly
-on every platform that runs the suite (section 11.4). No CPU platform
-flushes subnormals.
+The Metal backend microtest (`crates/vikshep-backend-metal/tests/microtests.rs`
+in `vikshep-compute-pro`) ran 1 048 576 (2^20) binary32 subnormal inputs through
+`s + s` and `s * 2.0f` on the Radeon Pro 555.  At index 0 (bits = `0x00000001`,
+the smallest positive subnormal), both operations returned `+0.0` instead of the
+IEEE-754 correctly rounded result.  The GPU's MODE register on AMD GCN sets
+`DENORM_FLZ_IN` and `DENORM_FLZ_OUT` to 1 by default for compute shaders; Metal
+provides no MSL control to clear these bits.
+
+**VDS-1.1 consequence (step 3 of section 8.2):** D-FTZ closes as "flush".
+VDS-1.1 defines flush-to-zero semantics for all backends:
+
+- Any Tier-1 binary32 input whose absolute value is strictly less than
+  `f32::MIN_POSITIVE` (i.e. a subnormal) is treated as zero of the same sign
+  before the operation, for `+`, `-`, `*`, and `sqrt`.
+- Any Tier-1 binary32 result of `+`, `-`, `*`, and `sqrt` whose absolute value
+  is strictly less than `f32::MIN_POSITIVE` is replaced by zero of the same sign.
+- The CPU reference MUST emulate flush-to-zero in software.
+  Canonical emulation helper:
+  ```rust
+  #[inline(always)]
+  fn ftz(x: f32) -> f32 {
+      if x.abs() < f32::MIN_POSITIVE { 0.0_f32.copysign(x) } else { x }
+  }
+  ```
+  applied to all Tier-1 operands before each operation and to all Tier-1 results.
+- `numerics_version` is incremented from 1 to 2; all conformance vectors MUST
+  be regenerated.
+- No Metal or CUDA backend may claim conformance under `numerics_version = 1`
+  (subnormals-preserved vectors).  Conformance is re-run after regeneration.
+
+**CPU observations (VDS-1.0):** IEEE subnormals were preserved in the CPU
+reference.  Rust on x86_64 and AArch64 preserves subnormals by default.
+`cpu_preserves_subnormals` (`crates/vikshep-scatter/tests/properties.rs`) and
+the `near_subnormal` conformance cases (section 11.2) all passed bit-exactly on
+every tested CPU platform.  These observations are superseded by VDS-1.1.
 
 ### 8.2 Decision procedure
 
@@ -810,8 +845,8 @@ neighbour distance more than ten times that of every other event
 | Id | Question | Status | Default / resolution path |
 |---|---|---|---|
 | D-MATH | Source of portable transcendental functions | Decided: Option A (`libm =0.2.16`, no features) | Revisit only if the cross-platform sweep fails (section 4.2) |
-| D-FTZ | Preserve subnormals or flush to zero on every backend | Open (CPU observations recorded, section 8.1) | Preserve; procedure in section 8.2 |
-| D-SQRT | Is `sqrt` correctly rounded on each GPU backend? | Open | CPU: correctly rounded (IEEE-754 requires it; Rust lowers to the hardware square-root instruction). CUDA: `--prec-sqrt=true` expected to give a correctly rounded `sqrt`, to be verified. Metal: to be measured. Fallback for any backend that fails: a Markstein-style square root using an exact fused multiply-add and a final correction step, proven correctly rounded; this is the only place an FMA could be admitted, and only by amendment of this specification |
+| D-FTZ | Preserve subnormals or flush to zero on every backend | **Closed: flush** (Metal measurement 2026-10-03; VDS-1.1 defines FTZ semantics, section 8.1) | VDS-1.1: flush-to-zero for all backends; CPU emulation required; `numerics_version` bumped from 1 to 2; conformance vectors regenerated |
+| D-SQRT | Is `sqrt` correctly rounded on each GPU backend? | Metal: **correctly rounded** (2026-10-03, AMD Radeon Pro 555, GCN 4th-gen; `precise::sqrt` verified bit-exact vs. CPU `f32::sqrt()` over 2^20 inputs — no Markstein fallback needed on this hardware). CUDA: open. | CPU: correctly rounded (IEEE-754 requires it; Rust lowers to the hardware square-root instruction). CUDA: `--prec-sqrt=true` expected to give a correctly rounded `sqrt`, to be verified. Fallback for any backend that fails: a Markstein-style square root using an exact fused multiply-add and a final correction step, proven correctly rounded; this is the only place an FMA could be admitted, and only by amendment of this specification |
 | D-DIV | Division in Tier 1 | Decided: no division in Tier 1 | r2 ratios, pooling means and every other quotient are computed on the host (Tier 2) |
 | D-STEER | Steerable-basis orientation synthesis | Open | Changes arithmetic; allowed only if the reference adopts it under a new `numerics_version` |
 

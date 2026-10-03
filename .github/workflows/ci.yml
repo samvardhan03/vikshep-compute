@@ -123,8 +123,9 @@ jobs:
             status=1
           fi
           for f in "${reports[@]}"; do
-            if ! grep -q '"fail": 0,' "$f"; then
+            if ! jq -e '.summary.fail == 0 and .summary.pass == .summary.cases and .summary.cases > 0' "$f" > /dev/null; then
               echo "FAILING CASES: $f"
+              jq '.summary' "$f" || true
               status=1
             fi
             if cmp -s "${reports[0]}" "$f"; then

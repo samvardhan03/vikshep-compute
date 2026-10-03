@@ -48,7 +48,7 @@ determinism lint, and the cross-platform sweep hashes.
 - [x] `conformance/vectors/v1/`: full bytes for outputs up to 16 KiB, SHA3-256 for the rest; generated with `cargo run --release -p vikshep-conformance -- generate`
 - [x] `vikshep-conformance run --backend cpu` JSON report (per case PASS/FAIL; first differing element, expected/actual bits and ulp distance on failure; fault injection tested)
 - [x] CI: every OS leg runs the full suite (CPU and through the C ABI); `hash-diff` requires all-pass and byte-identical reports plus the sweep hashes
-- [ ] First CI run of C1 (pending push)
+- [x] First CI run of C1 ([run 37103963283](https://github.com/samvardhan03/vikshep-compute/actions/runs/37103963283), PR [#1](https://github.com/samvardhan03/vikshep-compute/pull/1)): the suite passed 313 / 313 on all four OS legs, CPU and C ABI, and the four reports were byte-identical (SHA-256 `5a527b3b1f39966f4946e61f3112b223e1be5e8482e3bc28150c9a48f8f01444`, equal to the local report). `hash-diff` failed only because its all-pass check grepped for `"fail": 0,` (the key is last in its object, so there is no comma); it now parses the report with `jq`
 
 ### F. Correctness oracles and properties
 - [x] `oracles/kymatio_fixtures.py` (Kymatio 0.3.0, numpy 2.4.6, scipy 1.17.1, binary64): 20 configurations, fixtures committed with provenance
@@ -68,12 +68,12 @@ determinism lint, and the cross-platform sweep hashes.
 
 ### Gate C1
 - [x] Conformance v1 generated; identical reports on x86_64 Linux (native), AArch64 Linux (qemu-user) and x86_64 Windows (MinGW build under Wine)
-- [ ] Identical in CI on Linux x86_64, Linux arm64, macOS arm64, Windows x86_64 (pending push)
+- [x] Identical in CI on Linux x86_64, Linux arm64, macOS arm64, Windows x86_64 (run 37103963283; `hash-diff` green pending the re-run with the corrected check)
 - [x] FFT correctness tests pass
 - [x] Kymatio oracle within stated tolerance
 - [x] Exact power-of-two homogeneity test passes
 - [x] Spec section 14 complete
-- [ ] PR open (pending)
+- [x] PR open ([#1](https://github.com/samvardhan03/vikshep-compute/pull/1))
 
 ## Decisions taken in C1
 

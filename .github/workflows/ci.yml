@@ -177,8 +177,10 @@ jobs:
       - name: Build the static library
         run: |
           touch crates/vikshep-capi/src/lib.rs  # force rustc to run (and print) even with a restored cache
-          cargo rustc --release --locked -p vikshep-capi --lib -- --print native-static-libs 2> build.log || { cat build.log; exit 1; }
-          sed -n 's/.*native-static-libs: //p' build.log | head -n 1 > native-libs.txt
+          # --color never: with CARGO_TERM_COLOR=always the note ends in an ANSI
+          # escape that would become part of the last library name.
+          cargo rustc --release --locked --color never -p vikshep-capi --lib -- --print native-static-libs 2> build.log || { cat build.log; exit 1; }
+          sed -n 's/.*native-static-libs: //p' build.log | sed $'s/\x1b\\[[0-9;]*m//g' | head -n 1 > native-libs.txt
           echo "native libraries: $(cat native-libs.txt)"
           test -s native-libs.txt
       - name: C smoke test, C example, C++ example

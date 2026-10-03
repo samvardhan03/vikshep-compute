@@ -18,6 +18,32 @@ use vikshep_scatter::{Group, PadPolicy, ScatterConfig, ScatterOutput, Scattering
 /// The suite definition, compiled in.
 pub const CASES_TOML: &str = include_str!("../../../conformance/cases.toml");
 
+/// `expected.json` of suite v1, compiled in (for self-tests without the
+/// repository checkout: `vikshep-capi`, `vikshep-py`).
+pub const EXPECTED_JSON: &str = include_str!("../../../conformance/vectors/v1/expected.json");
+
+/// `expected.bin` of suite v1, compiled in.
+pub const EXPECTED_BIN: &[u8] = include_bytes!("../../../conformance/vectors/v1/expected.bin");
+
+/// Case-id prefixes of the `quick` self-test subset: FFTs, the element-wise
+/// kernels, 1-D and 2-D scattering, and the fast Tier-2 cases.
+pub const QUICK_SUBSET: &[&str] = &[
+    "fft1d/",
+    "fft2d/8x8/",
+    "modulus/",
+    "mul_real_filter/",
+    "scatter/1d/256/J2-",
+    "scatter/1d/256/J4-Q2-L1/",
+    "scatter/2d/32x32/J2-Q1-L4/",
+    "tier2/dcorr_exact/n200/",
+    "tier2/dcorr_grad/n64/",
+    "tier2/pearson_proxy/",
+    "tier2/jsd/",
+    "tier2/train/logistic/exact/lambda0/",
+    "tier2/calibration/",
+    "tier2/sw1/",
+];
+
 /// Default directory of the expected vectors.
 #[must_use]
 pub fn default_vectors_dir() -> PathBuf {
@@ -557,9 +583,7 @@ impl<'a> Runner<'a> {
                 vec![one("out", Dtype::C32, c32_bytes(&d))]
             }
             CaseKind::Scatter { config, input } => {
-                let rows = if config.dim == 1 { 1 } else { config.shape[0] };
-                let cols = *config.shape.last().unwrap();
-                let x = real_input(*input, rows, cols, &mut s);
+                let x = scatter_input(config, *input, self.master_seed);
                 let sc = Scattering::new(config.clone()).expect("validated configuration");
                 let mut trivial = config.clone();
                 trivial.group = Group::Trivial;
@@ -888,8 +912,18 @@ pub fn run(
     dir: &Path,
     filters: &[String],
 ) -> Result<Report, BackendError> {
-    let suite = Suite::load();
     let (expected, blob) = load_expected(dir);
+    run_against(backend, &expected, &blob, filters)
+}
+
+/// Run against already loaded vectors.
+pub fn run_against(
+    backend: &dyn ScatterBackend,
+    expected: &Expected,
+    blob: &[u8],
+    filters: &[String],
+) -> Result<Report, BackendError> {
+    let suite = Suite::load();
     let by_id: BTreeMap<&str, &ExpectedCase> =
         expected.cases.iter().map(|c| (c.id.as_str(), c)).collect();
     let mut runner = Runner::new(backend, suite.master_seed);
@@ -903,7 +937,7 @@ pub fn run(
             &case.id,
             &outputs,
             by_id.get(case.id.as_str()).copied(),
-            &blob,
+            blob,
         ));
     }
     let pass = cases.iter().filter(|c| c.status == "PASS").count();
@@ -917,6 +951,62 @@ pub fn run(
         },
         cases,
     })
+}
+
+/// Self-test against the compiled-in vectors: `subset` is `"quick"`
+/// ([`QUICK_SUBSET`]) or `"full"` (every case).
+pub fn selftest(backend: &dyn ScatterBackend, subset: &str) -> Result<Report, String> {
+    let filters: Vec<String> = match subset {
+        "quick" => QUICK_SUBSET.iter().map(|s| (*s).to_string()).collect(),
+        "full" => Vec::new(),
+        other => return Err(format!("unknown subset {other:?} (expected quick or full)")),
+    };
+    let expected: Expected =
+        serde_json::from_str(EXPECTED_JSON).map_err(|e| format!("embedded vectors: {e}"))?;
+    run_against(backend, &expected, EXPECTED_BIN, &filters).map_err(|e| e.to_string())
+}
+
+/// Input signal of a scattering case (VDS-1 section 11.2): drawn from the
+/// stream of the id of the case's trivial-group variant, so the trivial and
+/// `so2_relative` cases of one configuration share their input (and the
+/// pooled case is the pooling of the trivial case's coefficients), whatever
+/// subset of cases runs.
+#[must_use]
+pub fn scatter_input(config: &ScatterConfig, input: InputKind, master_seed: u64) -> Vec<f32> {
+    let mut trivial = config.clone();
+    trivial.group = Group::Trivial;
+    let mut s = Stream::new(master_seed, stream_id_of(&scatter_id(&trivial, input)));
+    let rows = if config.dim == 1 { 1 } else { config.shape[0] };
+    let cols = config.shape[config.dim - 1];
+    real_input(input, rows, cols, &mut s)
+}
+
+/// Configuration and input signal of the scattering case `id` (one signal,
+/// generated exactly as the runner does).
+#[must_use]
+pub fn scatter_case(id: &str) -> Option<(ScatterConfig, Vec<f32>)> {
+    let suite = Suite::load();
+    let case = suite.cases.iter().find(|c| c.id == id)?;
+    match &case.kind {
+        CaseKind::Scatter { config, input } => Some((
+            config.clone(),
+            scatter_input(config, *input, suite.master_seed),
+        )),
+        _ => None,
+    }
+}
+
+/// Expected output `name` of case `id` in the compiled-in vectors:
+/// its SHA3-256 (hex) and, when stored in full, its bytes.
+#[must_use]
+pub fn embedded_expected_output(id: &str, name: &str) -> Option<(String, Option<Vec<u8>>)> {
+    let expected: Expected = serde_json::from_str(EXPECTED_JSON).ok()?;
+    let case = expected.cases.iter().find(|c| c.id == id)?;
+    let o = case.outputs.iter().find(|o| o.name == name)?;
+    let bytes = o
+        .offset
+        .map(|off| EXPECTED_BIN[off..off + o.len_bytes].to_vec());
+    Some((o.sha3_256.clone(), bytes))
 }
 
 impl Report {

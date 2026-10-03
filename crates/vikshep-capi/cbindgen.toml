@@ -12,6 +12,12 @@ header = """/*
  * pointers after returning. VkspComplex32 is { float re; float im; },
  * 8 bytes, alignment 4. Calls are synchronous. See the crate documentation
  * of vikshep-capi and spec/VDS-1.md section 14.6.
+ *
+ * vksp_register_backend() hands an external table (for example a CUDA or
+ * Metal backend built outside this repository) to the library, which then
+ * uses it by name in every host function of vikshep.h; see
+ * docs/external_backends.md. The status codes below are shared with
+ * vikshep.h.
  */"""
 include_guard = "VIKSHEP_BACKEND_H"
 cpp_compat = true
@@ -24,3 +30,12 @@ no_includes = true
 
 [export]
 include = ["VkspBackendV1", "VkspComplex32", "VkspCanvas", "VkspSubsample", "VkspCapabilities"]
+# The stable host API lives in include/vikshep.h (cbindgen-vikshep.toml).
+exclude = [
+    "VkspScatterConfig", "VkspVersionInfo", "BUILTIN_BACKEND",
+    "VKSP_API_VERSION", "VKSP_OID_LEN", "VKSP_SHA3_HEX_LEN", "VKSP_PAD_CIRCULAR", "VKSP_PAD_ZERO",
+    "VKSP_GROUP_TRIVIAL", "VKSP_GROUP_SO2_RELATIVE", "VKSP_EXECUTOR_LOCAL", "VKSP_EXECUTOR_CLOUD",
+    "vksp_version_info", "vksp_status_string", "vksp_last_error", "vksp_config_1d",
+    "vksp_config_2d", "vksp_scatter_info", "vksp_oid", "vksp_scatter", "vksp_r2",
+    "vksp_fingerprint", "vksp_provenance_manifest", "vksp_conformance_selftest",
+]

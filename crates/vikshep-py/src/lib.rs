@@ -1,11 +1,14 @@
-//! Python bindings for Vikshep compute.
+//! Python bindings of Vikshep compute: the `vikshep-compute` distribution,
+//! imported as `vikshep_compute` (PyO3 + maturin, abi3 wheels for Python
+//! 3.10 and later).
 //!
-//! Placeholder created by milestone C0; no functionality yet.
+//! The extension module is compiled only with the `python` feature, which
+//! maturin enables (`crates/vikshep-py/pyproject.toml`); without it this
+//! crate is empty, so `cargo test --workspace` never links against Python.
+//!
+//! Inputs are converted with numpy and copied into Rust-owned, contiguous,
+//! row-major buffers before any computation, so numpy strides, memory
+//! order and byte order never affect results (see `python.rs`).
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn crate_identity() {
-        assert_eq!(env!("CARGO_PKG_NAME"), "vikshep-py");
-    }
-}
+#[cfg(feature = "python")]
+mod python;

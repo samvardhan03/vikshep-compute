@@ -96,8 +96,73 @@ pub fn log_mean(out: &ScatterOutput) -> Vec<f64> {
     res
 }
 
+/// Mean of each path over output positions: for each signal and path,
+/// `pairwise_sum_s(f64(c_s)) / count` in binary64. Returns `[batch][path]`
+/// (VDS-1 section 14.9).
+#[must_use]
+pub fn path_mean(out: &ScatterOutput) -> Vec<f64> {
+    let n = out.out_len();
+    let mut res = Vec::with_capacity(out.batch * out.paths.len());
+    let mut v = vec![0.0f64; n];
+    for b in 0..out.batch {
+        for p in 0..out.paths.len() {
+            for (dst, &c) in v.iter_mut().zip(out.path(b, p)) {
+                *dst = f64::from(c);
+            }
+            res.push(pairwise_sum(&v) / n as f64);
+        }
+    }
+    res
+}
+
+/// Population standard deviation of each path over output positions:
+/// `sqrt(pairwise_sum_s((f64(c_s) - mean)^2) / count)` with the mean of
+/// [`path_mean`]. Returns `[batch][path]` (VDS-1 section 14.9).
+#[must_use]
+pub fn path_std(out: &ScatterOutput) -> Vec<f64> {
+    let n = out.out_len();
+    let means = path_mean(out);
+    let mut res = Vec::with_capacity(means.len());
+    let mut v = vec![0.0f64; n];
+    for b in 0..out.batch {
+        for p in 0..out.paths.len() {
+            let mu = means[b * out.paths.len() + p];
+            for (dst, &c) in v.iter_mut().zip(out.path(b, p)) {
+                let d = f64::from(c) - mu;
+                *dst = d * d;
+            }
+            res.push((pairwise_sum(&v) / n as f64).sqrt());
+        }
+    }
+    res
+}
+
 /// Canonical bytes of a log-mean fingerprint (little-endian binary64).
 #[must_use]
 pub fn log_mean_bytes(values: &[f64]) -> Vec<u8> {
     values.iter().flat_map(|v| v.to_le_bytes()).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cascade::PathInfo;
+
+    #[test]
+    fn path_mean_and_std() {
+        let path = PathInfo {
+            order: 0,
+            n: vec![],
+            j: vec![],
+            theta: vec![],
+        };
+        let out = ScatterOutput {
+            paths: vec![path; 2],
+            out_shape: vec![4],
+            batch: 1,
+            coefficients: vec![1.0, 2.0, 3.0, 4.0, -1.0, -1.0, -1.0, -1.0],
+        };
+        assert_eq!(path_mean(&out), vec![2.5, -1.0]);
+        assert_eq!(path_std(&out), vec![1.25f64.sqrt(), 0.0]);
+    }
 }

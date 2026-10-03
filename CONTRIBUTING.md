@@ -17,19 +17,43 @@ Run these before opening a pull request. CI runs the same checks.
 ```sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo clippy -p vikshep-py --features python --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 scripts/determinism-lint.sh
 cargo run --release -p vikshep-conformance -- check
 cargo run --release -p vikshep-conformance -- run --backend cpu
 ```
 
-If you change `crates/vikshep-capi/src/lib.rs`, regenerate the C header with
-cbindgen 0.29.4:
+If you change `crates/vikshep-capi/src`, regenerate both C headers with
+cbindgen 0.29.4 (CI verifies them):
 
 ```sh
 cbindgen --config crates/vikshep-capi/cbindgen.toml --crate vikshep-capi \
          --output include/vikshep_backend.h
+cbindgen --config crates/vikshep-capi/cbindgen-vikshep.toml --crate vikshep-capi \
+         --output include/vikshep.h
 ```
+
+A new exported function belongs to one header: add it to the `exclude` list
+of the other configuration.
+
+Python package (needs a Rust toolchain and Python 3.10 or later):
+
+```sh
+python -m pip install ./crates/vikshep-py pytest jsonschema
+python -m pytest crates/vikshep-py/tests
+```
+
+The C and C++ examples (CI builds and runs them on Linux and macOS):
+
+```sh
+cargo rustc --release -p vikshep-capi --lib -- --print native-static-libs
+cc -std=c99 -Iinclude examples/c/vikshep_example.c target/release/libvikshep_capi.a <native libs> -o c_example
+c++ -std=c++17 -Iinclude examples/cpp/vikshep_example.cpp target/release/libvikshep_capi.a <native libs> -o cpp_example
+```
+
+The MCP data plane: `cargo test -p vikshep-mcp` runs its integration test
+(POSIX shared memory on Unix, the file store everywhere).
 
 Oracle fixtures are regenerated only on purpose, never in CI:
 
@@ -70,6 +94,9 @@ These follow from [`spec/VDS-1.md`](spec/VDS-1.md):
   ratios and reductions stay on the host.
 - Exceptions to the determinism lint go in `scripts/determinism-lint.allow`,
   each with a justification.
+- Bindings add no arithmetic: they copy inputs into contiguous row-major
+  buffers and call the reference code (VDS-1 section 20).
+- No licence checks, telemetry or network calls in this repository.
 
 ## Style
 

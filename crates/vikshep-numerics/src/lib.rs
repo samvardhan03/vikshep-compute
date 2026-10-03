@@ -6,11 +6,13 @@
 //! * [`sum`]: fixed-order (pairwise) summation for host reductions.
 //! * [`order`]: total-order sorting with index tie-break.
 //! * [`jcs`]: RFC 8785 canonical JSON, including number formatting.
+//! * [`provenance`]: provenance manifests and their hash.
 
 pub mod fft;
 pub mod jcs;
 pub mod oid;
 pub mod order;
+pub mod provenance;
 pub mod rng;
 pub mod sum;
 

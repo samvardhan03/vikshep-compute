@@ -12,6 +12,7 @@ members = [
     "crates/vikshep-py",
     "crates/vikshep-capi",
     "crates/vikshep-mcp",
+    "crates/vikshep-conformance-core",
     "crates/vikshep-conformance",
 ]
 
@@ -35,6 +36,11 @@ serde_json = "=1.0.151"
 toml = { version = "=1.1.6", default-features = false, features = ["parse", "serde"] }
 criterion = { version = "=0.8.2", default-features = false, features = ["cargo_bench_support"] }
 
+# Bindings and transport: these never touch output bytes.
+pyo3 = { version = "=0.29.3", default-features = false, features = ["macros"] }
+numpy = "=0.29.0"
+libc = "=0.2.190"
+
 vikshep-detmath = { path = "crates/vikshep-detmath" }
 vikshep-numerics = { path = "crates/vikshep-numerics" }
 vikshep-backend-api = { path = "crates/vikshep-backend-api" }
@@ -44,6 +50,8 @@ vikshep-scatter = { path = "crates/vikshep-scatter" }
 vikshep-stats = { path = "crates/vikshep-stats" }
 vikshep-train = { path = "crates/vikshep-train" }
 vikshep-anomaly = { path = "crates/vikshep-anomaly" }
+vikshep-conformance-core = { path = "crates/vikshep-conformance-core" }
+vikshep-mcp = { path = "crates/vikshep-mcp" }
 
 [workspace.lints.rust]
 # Every crate forbids unsafe code except vikshep-capi and vikshep-py, which

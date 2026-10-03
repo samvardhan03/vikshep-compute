@@ -1,6 +1,6 @@
 [package]
 name = "vikshep-mcp"
-description = "Model Context Protocol server exposing Vikshep compute"
+description = "Model Context Protocol data plane (JSON-RPC 2.0 over stdio, tensors by OID in shared memory)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,7 +9,29 @@ authors.workspace = true
 repository.workspace = true
 publish.workspace = true
 
-[dependencies]
+[[bin]]
+name = "vikshep-mcp"
+path = "src/main.rs"
 
-[lints]
-workspace = true
+[dependencies]
+vikshep-anomaly.workspace = true
+vikshep-cpu.workspace = true
+vikshep-numerics.workspace = true
+vikshep-scatter.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+vikshep-conformance-core.workspace = true
+
+# POSIX shared memory needs `unsafe` (shm_open, mmap). Unsafe code is denied
+# crate-wide and allowed only in the `store::shm` module, where every unsafe
+# operation sits in a documented `unsafe` block.
+[lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"

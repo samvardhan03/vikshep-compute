@@ -14,10 +14,10 @@ crate-type = ["rlib", "staticlib", "cdylib"]
 
 [dependencies]
 vikshep-backend-api.workspace = true
+vikshep-conformance-core.workspace = true
 vikshep-cpu.workspace = true
-
-[dev-dependencies]
 vikshep-numerics.workspace = true
+vikshep-scatter.workspace = true
 
 # This crate does not inherit the workspace lint table: it will contain a
 # foreign-function interface, which cannot be written without `unsafe`, so

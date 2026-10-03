@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/samvardhan03/vikshep-compute/blob/main/spec/provenance.schema.json",
+  "title": "Vikshep provenance manifest",
+  "description": "Provenance manifest of one Vikshep computation (VDS-1 section 9.3). Manifests are RFC 8785 canonical JSON. manifest_hash is the lowercase hex SHA3-256 of the RFC 8785 canonical serialization of the manifest with the members 'execution' and 'manifest_hash' removed (the hashed subset). The hashed subset therefore covers schema, operation, inputs, config, filter_bank_sha3, numerics_version, tier2_version, seeds and outputs; backend, platform, executor and wall-clock times are recorded in 'execution' and never change the hash, so two conforming executions of the same computation have the same manifest_hash. Manifests never contain result floats; results are tensors referenced by OID. Shared contract with Vikshep Studio's studio-core. Licence: CC-BY-4.0.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "operation",
+    "inputs",
+    "config",
+    "filter_bank_sha3",
+    "numerics_version",
+    "tier2_version",
+    "seeds",
+    "outputs",
+    "execution",
+    "manifest_hash"
+  ],
+  "properties": {
+    "schema": {
+      "description": "Schema identifier and version. Hashed.",
+      "const": "vikshep.provenance/1"
+    },
+    "operation": {
+      "description": "Operation that produced the outputs, for example 'scattering', 'reduce', 'compare', 'detect_anomaly', 'train', 'calibrate', 'bench_report'. Hashed.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "inputs": {
+      "description": "Input tensors in operation order. Hashed.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/tensor" }
+    },
+    "config": {
+      "description": "Operation configuration, canonical JSON object (for scattering: J, L, Q, carrier_cutoff, dim, group, max_order, pad, shape; VDS-1 section 14.10). Hashed.",
+      "type": "object"
+    },
+    "filter_bank_sha3": {
+      "description": "Lowercase hex SHA3-256 of the canonical filter-bank bytes (VDS-1 section 14.3.4), or null when the operation uses no filters. Hashed.",
+      "oneOf": [
+        { "$ref": "#/$defs/sha3_256" },
+        { "type": "null" }
+      ]
+    },
+    "numerics_version": {
+      "description": "Tier-1 numerics version (VDS-1 section 10). Hashed.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "tier2_version": {
+      "description": "Tier-2 algorithm version (VDS-1 section 10.1). Hashed.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "seeds": {
+      "description": "Named 64-bit seeds as decimal strings (for example the master seed of a training run); empty when the operation draws no random numbers. Hashed.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^(0|[1-9][0-9]{0,19})$"
+      }
+    },
+    "outputs": {
+      "description": "Output tensors in operation order. Hashed.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/tensor" }
+    },
+    "execution": {
+      "description": "Where and when the computation ran. Not hashed.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["backend", "platform", "executor", "wall_clock"],
+      "properties": {
+        "backend": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "version"],
+          "properties": {
+            "name": {
+              "description": "Backend name, for example 'cpu' or the name a registered external backend reports.",
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "description": "Backend version string.",
+              "type": "string"
+            }
+          }
+        },
+        "platform": {
+          "description": "Rust target triple of the executing build, for example 'x86_64-unknown-linux-gnu'.",
+          "type": "string",
+          "minLength": 1
+        },
+        "executor": {
+          "description": "Local machine or remote worker.",
+          "enum": ["local", "cloud"]
+        },
+        "wall_clock": {
+          "description": "Wall-clock start and end in milliseconds since the Unix epoch, or null when not recorded. Never hashed.",
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["started_unix_ms", "finished_unix_ms"],
+              "properties": {
+                "started_unix_ms": { "type": ["integer", "null"], "minimum": 0 },
+                "finished_unix_ms": { "type": ["integer", "null"], "minimum": 0 }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "manifest_hash": {
+      "description": "Lowercase hex SHA3-256 of the canonical hashed subset (every member except 'execution' and 'manifest_hash').",
+      "$ref": "#/$defs/sha3_256"
+    }
+  },
+  "$defs": {
+    "oid": {
+      "description": "Object identifier: lowercase hex of the first 14 bytes of SHA3-256 of the raw tensor bytes (VDS-1 section 9.2).",
+      "type": "string",
+      "pattern": "^[0-9a-f]{28}$"
+    },
+    "sha3_256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "tensor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "oid", "dtype", "shape"],
+      "properties": {
+        "name": {
+          "description": "Role of the tensor, for example 'signal', 'coefficients', 'r2', 'log_mean'.",
+          "type": "string",
+          "minLength": 1
+        },
+        "oid": { "$ref": "#/$defs/oid" },
+        "dtype": {
+          "description": "Element type; numbers are little-endian IEEE-754 or unsigned integers, 'utf8' is text.",
+          "enum": ["float32", "float64", "uint8", "uint32", "utf8"]
+        },
+        "shape": {
+          "description": "Row-major shape; the raw bytes are the elements in this order, contiguous (VDS-1 section 9.1).",
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  }
+}

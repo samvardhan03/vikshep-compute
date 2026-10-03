@@ -1,0 +1,27 @@
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "vikshep-compute"
+description = "Deterministic compute core of Vikshep: wavelet scattering, statistics, training, anomaly search"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "AGPL-3.0-or-later"
+authors = [{ name = "Samvardhan Singh" }]
+dependencies = ["numpy>=1.22"]
+dynamic = ["version"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+[project.urls]
+Repository = "https://github.com/samvardhan03/vikshep-compute"
+
+[tool.maturin]
+module-name = "vikshep_compute._core"
+python-source = "python"
+features = ["python"]
+strip = true

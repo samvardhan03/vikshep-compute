@@ -8,25 +8,11 @@ use vikshep_backend_api::{
 use vikshep_conformance::suite::{self, Suite};
 use vikshep_cpu::CpuBackend;
 
-const SUBSET: &[&str] = &[
-    "fft1d/",
-    "fft2d/8x8/",
-    "modulus/",
-    "mul_real_filter/",
-    "scatter/1d/256/J2-",
-    "scatter/1d/256/J4-Q2-L1/",
-    "scatter/2d/32x32/J2-Q1-L4/",
-    "tier2/dcorr_exact/n200/",
-    "tier2/dcorr_grad/n64/",
-    "tier2/pearson_proxy/",
-    "tier2/jsd/",
-    "tier2/train/logistic/exact/lambda0/",
-    "tier2/calibration/",
-    "tier2/sw1/",
-];
-
 fn subset() -> Vec<String> {
-    SUBSET.iter().map(|s| (*s).to_string()).collect()
+    suite::QUICK_SUBSET
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect()
 }
 
 #[test]
@@ -114,4 +100,35 @@ fn report_pinpoints_a_one_ulp_fault() {
     assert_eq!(o.ulp_distance, Some(1));
     let json = report.to_json();
     assert!(json.contains("\"ulp_distance\": 1"), "{json}");
+}
+
+#[test]
+fn embedded_selftest_and_helpers() {
+    let report = suite::selftest(&CpuBackend::new(), "quick").unwrap();
+    assert!(report.summary.cases > 100);
+    assert_eq!(report.summary.fail, 0, "{}", report.to_json());
+    assert!(suite::selftest(&CpuBackend::new(), "nope").is_err());
+    let id = "scatter/1d/256/J4-Q1-L1/zero_pad/trivial/o2/uniform";
+    let (cfg, x) = suite::scatter_case(id).unwrap();
+    assert_eq!(x.len(), 256);
+    let out = vikshep_scatter::Scattering::new(cfg)
+        .unwrap()
+        .run(&CpuBackend::new(), &x)
+        .unwrap();
+    let (sha, _) = suite::embedded_expected_output(id, "S").unwrap();
+    assert_eq!(
+        vikshep_numerics::oid::hex(&vikshep_numerics::oid::sha3_256(&out.canonical_bytes())),
+        sha
+    );
+    assert!(suite::scatter_case("fft1d/n2/forward/uniform").is_none());
+}
+
+/// A pooled case gives the same result alone as after its trivial sibling
+/// (its input is the sibling's, VDS-1 section 11.2).
+#[test]
+fn pooled_cases_do_not_depend_on_run_order() {
+    let only = vec!["scatter/2d/32x32/J1-Q1-L4/circular.circular/so2_relative/".to_string()];
+    let report = suite::run(&CpuBackend::new(), &suite::default_vectors_dir(), &only).unwrap();
+    assert_eq!(report.summary.cases, 1);
+    assert_eq!(report.summary.fail, 0, "{}", report.to_json());
 }

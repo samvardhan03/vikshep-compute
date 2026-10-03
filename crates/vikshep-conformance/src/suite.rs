@@ -38,6 +38,8 @@ struct SuiteToml {
     modulus: ModulusGrid,
     mul_real_filter: MulGrid,
     scatter: Vec<ScatterGrid>,
+    #[serde(default)]
+    tier2: Vec<crate::tier2::Tier2Spec>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -245,6 +247,8 @@ pub enum CaseKind {
         /// Index into `crate::CASES`.
         index: usize,
     },
+    /// A Tier-2 case (VDS-1 section 11.5).
+    Tier2(crate::tier2::Tier2Spec),
 }
 
 /// One conformance case.
@@ -429,6 +433,9 @@ impl Suite {
         for (index, c) in crate::CASES.iter().enumerate() {
             push(format!("sweep/{}", c.name), CaseKind::Sweep { index });
         }
+        for spec in &t.tier2 {
+            push(spec.id(), CaseKind::Tier2(spec.clone()));
+        }
         let mut seen = std::collections::HashSet::new();
         for c in &cases {
             assert!(seen.insert(c.id.clone()), "duplicate case id {}", c.id);
@@ -454,6 +461,8 @@ pub enum Dtype {
     F64,
     /// interleaved binary32 complex
     C32,
+    /// raw bytes (JSON, Markdown, graph serializations)
+    Bytes,
 }
 
 /// One computed output.
@@ -583,6 +592,8 @@ impl<'a> Runner<'a> {
                 bytes: crate::case_bytes(&crate::CASES[*index]),
                 storable: false,
             }],
+            CaseKind::Tier2(spec) => crate::tier2::run(spec, self.master_seed, case.stream_id)
+                .map_err(BackendError::InvalidArgument)?,
         })
     }
 }
@@ -760,10 +771,18 @@ fn ordered(bits: u64, sign_bit: u32) -> i128 {
     }
 }
 
-fn first_difference(dtype: Dtype, want: &[u8], got: &[u8]) -> (usize, u64, String, String) {
-    let width = if dtype == Dtype::F64 { 8 } else { 4 };
+fn first_difference(dtype: Dtype, want: &[u8], got: &[u8]) -> (usize, Option<u64>, String, String) {
+    let width = match dtype {
+        Dtype::F64 => 8,
+        Dtype::F32 | Dtype::C32 => 4,
+        Dtype::Bytes => 1,
+    };
     for (i, (w, g)) in want.chunks(width).zip(got.chunks(width)).enumerate() {
         if w != g {
+            let hexw = |b: u64| format!("{b:0w$x}", w = width * 2);
+            if width == 1 {
+                return (i, None, hexw(u64::from(w[0])), hexw(u64::from(g[0])));
+            }
             let (wb, gb, sign) = if width == 8 {
                 (
                     u64::from_le_bytes(w.try_into().unwrap()),
@@ -778,13 +797,17 @@ fn first_difference(dtype: Dtype, want: &[u8], got: &[u8]) -> (usize, u64, Strin
                 )
             };
             let d = (ordered(wb, sign) - ordered(gb, sign)).unsigned_abs();
-            let hexw = |b: u64| format!("{b:0w$x}", w = width * 2);
-            return (i, u64::try_from(d).unwrap_or(u64::MAX), hexw(wb), hexw(gb));
+            return (
+                i,
+                Some(u64::try_from(d).unwrap_or(u64::MAX)),
+                hexw(wb),
+                hexw(gb),
+            );
         }
     }
     (
         want.len().min(got.len()) / width,
-        0,
+        Some(0),
         String::new(),
         String::new(),
     )
@@ -841,7 +864,7 @@ pub fn compare(
                 let (i, d, wb, gb) =
                     first_difference(e.dtype, &blob[off..off + e.len_bytes], &o.bytes);
                 r.first_diff_index = Some(i);
-                r.ulp_distance = Some(d);
+                r.ulp_distance = d;
                 r.expected_bits = Some(wb);
                 r.actual_bits = Some(gb);
             } else {

@@ -31,25 +31,34 @@ and must reproduce this reference bit for bit.
 
 ## Status
 
-Milestone C1 (reference scattering core): Stockham FFT, Kymatio-parameterized
-Morlet filter banks, the order-0/1/2 cascade with SO(2) pooling, r2 and
-log-mean reductions, the backend interface with its C ABI, and conformance
-suite v1. Next: C2. See [`STATUS.md`](STATUS.md).
+Milestone C2 (deterministic statistics, exact DisCo training, calibration,
+anomaly search): weighted distance correlation with its exact analytic
+gradient, Jensen-Shannon divergence, the Asimov significance proxy, the
+lambda frontier and benchmark report, logistic and MLP tagger heads trained
+with Adam, ridge calibration, and Sliced Wasserstein-1 anomaly search over a
+deterministic HNSW index. Built on C1 (Stockham FFT, Kymatio-parameterized
+Morlet filter banks, the order-0/1/2 cascade, r2 and log-mean reductions,
+the backend interface with its C ABI). Next: C3a. See
+[`STATUS.md`](STATUS.md).
 
 ## Layout
 
 | Path | Role |
 |---|---|
 | `crates/vikshep-detmath` | portable `exp`, `ln`, `sin`, `cos` (the only source of transcendental functions) |
-| `crates/vikshep-numerics` | Stockham FFT and twiddle tables, SplitMix64 and Philox4x32-10 streams, OIDs, fixed-order sums |
+| `crates/vikshep-numerics` | Stockham FFT and twiddle tables, SplitMix64 and Philox4x32-10 streams, OIDs, fixed-order sums, total-order sorting, RFC 8785 canonical JSON |
 | `crates/vikshep-scatter` | configuration, filter banks, cascade driver, pooling, r2, log-mean, provenance manifests |
 | `crates/vikshep-backend-api` | the `ScatterBackend` trait: the five Tier-1 kernels |
 | `crates/vikshep-cpu` | CPU reference backend |
 | `crates/vikshep-capi` | C ABI of the backend interface; header in `include/vikshep_backend.h` |
+| `crates/vikshep-stats` | weighted dCorr2 (exact and chunked) and its exact gradient, JSD, cuts, Asimov proxy, lambda frontier, benchmark report |
+| `crates/vikshep-train` | logistic and MLP heads, DisCo training with Adam, lambda sweep, ridge calibration |
+| `crates/vikshep-anomaly` | fingerprint distributions, Sliced Wasserstein-1, deterministic HNSW, detection, graph output |
 | `crates/vikshep-conformance` | conformance runner (binary) |
-| `crates/vikshep-stats`, `-train`, `-anomaly`, `-py`, `-mcp` | placeholders for later milestones |
+| `crates/vikshep-py`, `-mcp` | placeholders for later milestones |
 | `conformance/` | suite definition (`cases.toml`) and expected vectors |
-| `oracles/` | Kymatio oracle script and fixtures (developer-run) |
+| `oracles/` | developer-run oracle generators and fixtures: Kymatio, the public Vikshep Python metric, ECMAScript number formatting |
+| `docs/` | derivations (`disco_gradient.md`) |
 | `spec/VDS-1.md` | the specification |
 
 ## Building and testing
@@ -77,6 +86,20 @@ let ratios = r2(&s, cfg.carrier_cutoff);
 let fingerprint = log_mean(&s);
 ```
 
+Tier 2 on top of the features:
+
+```rust
+use vikshep_stats::dcorr::{dcorr2_grad, weighted_dcorr2};
+use vikshep_train::train::{train, GradientMode, TrainConfig};
+use vikshep_anomaly::{graph::{AnomalyConfig, AnomalyIndex}, sw1::fingerprint_clouds};
+
+let d = weighted_dcorr2(&scores, &mass, Some(&weights))?;      // exact up to 10,000 events
+let (d, grad) = dcorr2_grad(&scores, &mass, Some(&weights))?;  // exact analytic gradient
+let model = train(&dataset, TrainConfig { lambda: 1.0, gradient: GradientMode::Exact, ..Default::default() })?;
+let index = AnomalyIndex::build(&fingerprint_clouds(&s)?, AnomalyConfig::default())?;
+let graph_json = index.graph(&[])?.to_json()?;                  // nodes, edges, tau, config_digest
+```
+
 ## Conformance
 
 ```sh
@@ -85,9 +108,11 @@ cargo run --release -p vikshep-conformance -- hashes              # C0 determini
 cargo run --release -p vikshep-conformance -- generate            # regenerate vectors (CPU reference)
 ```
 
-Suite v1 has 313 cases: FFTs for N = 2..4096, the element-wise kernels,
-1-D and 2-D scattering grids with adversarial inputs, and the portable-math
-and random-stream sweeps (VDS-1 section 11). CI runs it on Linux x86_64,
+Suite v1 has 331 cases: FFTs for N = 2..4096, the element-wise kernels,
+1-D and 2-D scattering grids with adversarial inputs, the portable-math and
+random-stream sweeps, and the Tier-2 operations (dCorr2, its gradient, JSD,
+training runs, calibration, SW1, HNSW graphs and benchmark reports; VDS-1
+section 11). CI runs it on Linux x86_64,
 Linux AArch64, macOS arm64 and Windows x86_64 and fails if any case fails or
 any platform's report differs.
 

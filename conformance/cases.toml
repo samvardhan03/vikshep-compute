@@ -115,3 +115,113 @@ pads = [["zero_pad", "zero_pad"]]
 groups = ["trivial", "so2_relative"]
 max_order = 1
 inputs = ["uniform"]
+
+# Tier-2 cases (tier2_version 1; VDS-1 section 11.5). Inputs are drawn from
+# the case's stream as documented in crates/vikshep-conformance/src/tier2.rs
+# and the specification.
+
+[[tier2]]
+kind = "dcorr_exact"
+n = 200
+weighted = false
+
+[[tier2]]
+kind = "dcorr_exact"
+n = 200
+weighted = true
+
+[[tier2]]
+kind = "dcorr_exact"
+n = 1000
+weighted = true
+
+[[tier2]]
+kind = "dcorr_chunked"
+n = 12000
+weighted = true
+
+[[tier2]]
+kind = "dcorr_grad"
+n = 64
+weighted = false
+
+[[tier2]]
+kind = "dcorr_grad"
+n = 300
+weighted = true
+
+[[tier2]]
+kind = "pearson_proxy"
+n = 300
+weighted = true
+
+[[tier2]]
+kind = "jsd"
+n = 2000
+bins = 20
+
+[[tier2]]
+kind = "jsd"
+n = 2000
+bins = 7
+
+[[tier2]]
+kind = "train"
+head = "logistic"
+gradient = "exact"
+lambda = 0.0
+n = 600
+
+[[tier2]]
+kind = "train"
+head = "logistic"
+gradient = "exact"
+lambda = 2.0
+n = 600
+
+[[tier2]]
+kind = "train"
+head = "mlp8"
+gradient = "exact"
+lambda = 2.0
+n = 600
+
+[[tier2]]
+kind = "train"
+head = "logistic"
+gradient = "pearson_proxy"
+lambda = 2.0
+n = 600
+
+[[tier2]]
+kind = "calibration"
+n = 500
+d = 6
+
+[[tier2]]
+kind = "sw1"
+n = 16
+points = 24
+d = 6
+directions = 16
+
+[[tier2]]
+kind = "hnsw"
+n = 300
+m = 8
+k = 4
+tau = 1.0
+
+[[tier2]]
+kind = "report"
+head = "logistic"
+lambdas = [0.0, 1.0, 4.0]
+lambda_star = 1.0
+n = 1200
+
+[[tier2]]
+kind = "report"
+head = "mlp16"
+lambdas = [0.0, 0.5, 2.0]
+lambda_star = 0.5
+n = 1200

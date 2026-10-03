@@ -11,6 +11,7 @@
 //! specification, and any change to them is a change of conformance vectors.
 
 pub mod suite;
+pub mod tier2;
 
 use vikshep_numerics::NUMERICS_VERSION;
 use vikshep_numerics::oid::{hex, sha3_256};

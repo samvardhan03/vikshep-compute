@@ -184,6 +184,33 @@ impl Stream {
         (self.next_u64() >> 11) as f64 * TWO_POW_M53_F64
     }
 
+    /// Uniform integer in `[0, bound)` (`bound >= 1`) by rejection
+    /// (VDS-1 section 15.4): draw `r = next_u64()` until
+    /// `r < bound * floor(2^64 / bound)`, return `r mod bound`. Unbiased;
+    /// consumes two words per attempt.
+    pub fn uniform_below(&mut self, bound: u64) -> u64 {
+        assert!(bound >= 1, "empty range");
+        let zone = u64::MAX - (u64::MAX % bound + 1) % bound;
+        loop {
+            let r = self.next_u64();
+            if r <= zone {
+                return r % bound;
+            }
+        }
+    }
+
+    /// Fisher-Yates permutation of `0..n` (VDS-1 section 15.4):
+    /// start from the identity; for `i = n-1` down to 1, swap `p[i]` with
+    /// `p[uniform_below(i + 1)]`.
+    pub fn permutation(&mut self, n: usize) -> Vec<usize> {
+        let mut p: Vec<usize> = (0..n).collect();
+        for i in (1..n).rev() {
+            let j = self.uniform_below(i as u64 + 1) as usize;
+            p.swap(i, j);
+        }
+        p
+    }
+
     /// Standard normal variate (binary64) by the Box-Muller transform, using
     /// only `vikshep-detmath` functions and the correctly rounded `sqrt`:
     ///
@@ -346,6 +373,36 @@ mod tests {
             ((u64::MAX >> 11) as f64) * TWO_POW_M53_F64,
             1.0 - f64::EPSILON / 2.0
         );
+    }
+
+    #[test]
+    fn uniform_below_is_in_range_and_rejects_the_tail() {
+        let mut s = Stream::new(77, 0);
+        let mut counts = [0usize; 3];
+        for _ in 0..30_000 {
+            counts[s.uniform_below(3) as usize] += 1;
+        }
+        assert!(
+            counts.iter().all(|&c| (9_000..11_000).contains(&c)),
+            "{counts:?}"
+        );
+        // bound 1 always yields 0; a bound just above 2^63 forces rejections.
+        assert_eq!(s.uniform_below(1), 0);
+        let big = (1u64 << 63) + 1;
+        for _ in 0..100 {
+            assert!(s.uniform_below(big) < big);
+        }
+    }
+
+    #[test]
+    fn permutation_is_a_permutation_and_reproducible() {
+        let p = Stream::new(5, 9).permutation(1000);
+        let mut q = p.clone();
+        q.sort_unstable();
+        assert_eq!(q, (0..1000).collect::<Vec<_>>());
+        assert_eq!(p, Stream::new(5, 9).permutation(1000));
+        assert_ne!(p, Stream::new(5, 10).permutation(1000));
+        assert!(Stream::new(1, 1).permutation(0).is_empty());
     }
 
     #[test]

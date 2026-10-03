@@ -2,8 +2,9 @@
 
 | | |
 |---|---|
-| Status | Draft. Complete for `numerics_version = 1` (sections 1 to 14) |
+| Status | Draft. Complete for `numerics_version = 1` (sections 1 to 14) and `tier2_version = 1` (sections 15 to 19) |
 | Numerics version | 1 |
+| Tier-2 version | 1 |
 | Reference implementation | this repository (`vikshep-compute`), Rust CPU code |
 | Copyright | Samvardhan Singh |
 | Licence | CC-BY-4.0 (see `LICENSING.md`) |
@@ -573,8 +574,9 @@ MUST NOT change. Implementation: `crates/vikshep-numerics/src/oid.rs`.
 
 Dtype, shape and layout are not part of the tensor bytes; they are recorded
 in the provenance manifest. The manifest hash is SHA3-256 of the manifest
-serialized with the JSON Canonicalization Scheme (RFC 8785). Manifests never
-carry result floats: results are tensors referenced by their OIDs.
+serialized with the JSON Canonicalization Scheme (RFC 8785, section 15.6).
+Manifests never carry result floats: results are tensors referenced by their
+OIDs.
 
 ---
 
@@ -587,6 +589,17 @@ any output bit MUST bump it. Conformance vectors are keyed by
 `numerics_version` (`conformance/vectors/v<version>/`). Within one
 `numerics_version`, cases MAY be added, but the expected output of an existing
 case MUST NOT change.
+
+### 10.1 Tier-2 version
+
+`tier2_version` (`TIER2_VERSION` in `vikshep-numerics`, starting at 1)
+versions the Tier-2 algorithms of sections 15 to 19 independently of the
+Tier-1 arithmetic. A change to a Tier-2 algorithm, order, constant or format
+that changes an output bit MUST bump `tier2_version`; it does not bump
+`numerics_version` as long as no Tier-1 output and no C0 sweep changes. The
+expected outputs of the `tier2/*` conformance cases (section 11.5) are keyed
+by `tier2_version`: a `tier2_version` bump regenerates exactly those cases.
+Tier-2 reports carry both versions.
 
 ---
 
@@ -612,13 +625,15 @@ written, into cases with normative identifiers:
 | filter multiplication kernel | `mul_real_filter/{R}x{C}/{input}` | `out` (complex) |
 | scattering | `scatter/{dim}d/{shape}/J{J}-Q{Q}-L{L}/{pads}/{group}/o{max_order}/{input}` | `S`, `r2`, `log_mean`, `filters` |
 | C0 sweeps (sections 4.4, 5.6) | `sweep/{name}` | `out` (hash only) |
+| Tier-2 cases (section 11.5) | `tier2/{kind}/...` | per kind |
 
 The grids cover 1-D scattering with N in {256, 1024}, J in {2, 4, 6}, Q in
 {1, 4, 8}, plus zero padding, non-power-of-two length (192) and adversarial
 inputs; 2-D scattering with N in {32x32, 64x64, 128x128}, J in {1, 2, 3, 4},
 L in {4, 8}, pads circular/circular and zero_pad/circular, both groups, plus
 adversarial inputs, a rectangular zero-padded case with L = 6 and order-1
-cases. Version 1 has 313 cases.
+cases. Version 1 has 331 cases: 313 Tier-1 and sweep cases (C0, C1) and 18
+Tier-2 cases (C2).
 
 **Stream id** of a case: the first 8 bytes, little-endian, of SHA3-256 of its
 identifier. Inputs are drawn from `Stream(master_seed = 0x56445331,
@@ -668,7 +683,8 @@ cargo run --release -p vikshep-conformance -- run --backend cpu [--report FILE]
 which prints a JSON report: per case `PASS` or `FAIL`; for a failing output
 stored in full, the index of the first differing element (complex values
 count as two binary32 elements), the expected and actual bits and their
-distance in ulps; for a hash-only output, the hash mismatch. The report
+distance in ulps (for raw-byte outputs such as JSON, the first differing
+byte); for a hash-only output, the hash mismatch. The report
 contains no timing or platform data, so reports from different machines
 compare byte for byte. The process exits non-zero if any case fails.
 `--backend capi-cpu` runs the CPU reference through the C ABI of section
@@ -678,9 +694,27 @@ compare byte for byte. The process exits non-zero if any case fails.
 
 CI runs the full suite on Linux x86_64, Linux AArch64, macOS arm64 and
 Windows x86_64; the `hash-diff` job fails unless every report is all-pass
-and byte-identical. Before the first CI run, identical reports were also
+and byte-identical. Before each first CI run, identical reports were also
 obtained on AArch64 Linux under qemu-user and on x86_64 Windows (MinGW build)
 under Wine.
+
+### 11.5 Tier-2 cases
+
+`[[tier2]]` entries of `conformance/cases.toml` are single cases. Inputs come
+from `Stream(0x56445331, stream_id)` of the case (`z` a standard normal
+`next_normal_f64`, `u` a `next_f64_unit`), per kind:
+
+| Kind | Inputs | Outputs |
+|---|---|---|
+| `dcorr_exact`, `dcorr_chunked` (seed = stream id) | per event `x = z1`, `y = x x + 0.5 z2`, then `w = 0.1 + u` if weighted, else 1 | `value` |
+| `dcorr_grad` | as above, scores `sigmoid(x)`, protected `y` | `value`, `grad` |
+| `pearson_proxy` | as `dcorr_grad` | `grad` |
+| `jsd` | synthetic sample (section 17.8, seed = master seed, split = stream id); background `m`, post-cut = background with `x0 > 0.5` | `pre`, `post`, `jsd` |
+| `train` | synthetic sample of `n` events, `d = 4`; 4 epochs, batch 128, `lr = 0.02`, seed = stream id | `model` (section 17.6), `scores` |
+| `calibration` | `x_ij = (1 + j) z + j`; `t = 1 + sum_j c_j x_ij + 0.1 z`, `c_j = (j + 1) (-1)^j / d` | `constants` (JSON), `residuals` |
+| `sw1` | cloud `i`: `points x d` values `z + 0.1 i`; directions seeded with the stream id | `matrix` (all pairs) |
+| `hnsw` | `n` clouds of 8 points in 4-D, values `z + 4` for every 50th cloud, else `z`; 8 directions, `ef_construction = 32`, `ef_search = 16`, 30 layout iterations, seed = stream id | `graph_bytes`, `kth_distance`, `flags`, `graph_json` |
+| `report` | train and eval synthetic samples (splits = stream id and stream id + 1), 5 epochs, batch 128, `lr = 0.02` | `report_json`, `report_md` |
 
 ---
 
@@ -732,7 +766,42 @@ VDS-1 does not perform (section 14.3.6).
 
 detmath against mpmath (section 4.3), the FFT against the literal recursion
 and a naive DFT (sections 6.4, 6.7), the generators against published known
-answers (section 5.5).
+answers (section 5.5), canonical-JSON number formatting against ECMAScript
+`String(x)` (section 15.6).
+
+### 12.4 Parity with the public Python metric
+
+`oracles/python_disco/gen_fixtures.py` runs the public Vikshep repository's
+`weighted_dcorr2` (`backend/ingest/src/vikshep_ingest/disco.py`), its
+Pearson-proxy gradient and its `train_calibrate`
+(`backend/ingest/src/vikshep_ingest/cli/_train.py`, commit 7882dfc) on the
+inputs of `backend/ingest/tests/test_disco.py` (same numpy seeds and
+constructions) and records inputs and outputs as exact binary64 bit
+patterns. Every original Python assertion is re-checked on the Rust values
+(independent variables near 0, `Y = X^2` with symmetric `X` above 0.2,
+weighted above unweighted on skewed weights, perfect linear and identical
+arrays near 1, a single element exactly 0, weight-scale invariance, and the
+length-mismatch error).
+
+| Quantity | Stated tolerance | Worst measured |
+|---|---|---|
+| dCorr2 (11 cases, absolute) | 1e-12 | 1.1e-16 |
+| Pearson-proxy gradient (relative to its largest entry) | 1e-12 | 5.0e-16 |
+| Calibration coefficients, standardization, bias, r2, residual std (relative) | 1e-12 | 1.1e-13 |
+
+The chunked estimator is not compared: the Python reference permutes with
+numpy's generator and this one with Philox (section 16.1.2).
+
+### 12.5 Gradient and model checks
+
+The exact dCorr2 gradient matches central finite differences (step `1e-6`)
+to within `1e-9` of its largest component on weighted and unweighted samples
+(stated tolerance `1e-6`; `crates/vikshep-stats/tests/gradient.rs`). The MLP
+logit gradient matches finite differences to `1e-8`. HNSW recall@10 against
+brute force on SW1 (400 clouds) is 1.000 (stated minimum 0.95), and an
+injected outlier event in a scattering pipeline is flagged with a k-th
+neighbour distance more than ten times that of every other event
+(`crates/vikshep-anomaly/tests/end_to_end.rs`).
 
 ---
 
@@ -1099,6 +1168,449 @@ Each scattering run is described by an RFC 8785 manifest
 
 ---
 
+## 15. Tier-2 determinism rules
+
+Sections 15 to 19 specify the Tier-2 operations that run on top of the
+scattering features: statistics (`vikshep-stats`), training and calibration
+(`vikshep-train`) and anomaly search (`vikshep-anomaly`). They always run in
+the Rust CPU code of this repository and MUST produce identical bytes on
+every supported platform. They are versioned by `tier2_version`
+(section 10.1).
+
+### 15.1 Arithmetic
+
+Binary64 throughout; every operation is rounded once and evaluated in the
+order written (section 2.3). Transcendental functions come only from
+`vikshep-detmath` (section 4); `sqrt` (correctly rounded), division,
+`floor`, `ceil`, `min`, `max` and `abs` are allowed. No fused multiply-add.
+
+### 15.2 Sums
+
+Every sum over events (or other data-sized index sets) is the pairwise tree
+`psum`, applied to the terms in their natural (event) order:
+
+```
+psum([])      = +0
+psum([a])     = a
+psum(a[0..n]) = psum(a[0..h]) + psum(a[h..n]),   h = floor(n / 2)
+```
+
+(`vikshep_numerics::sum::pairwise_sum`, block size 1). Dot products over
+feature or parameter dimensions, and the sums of the Cholesky factorization,
+are sequential from index 0 (from the bias where stated). Parallel execution
+is allowed only across independent units (for example the rows of the dCorr2
+double sums) whose results are written to fixed indices and then combined in
+index order by `psum`; results never depend on the number of threads.
+
+### 15.3 Means and divisions
+
+A mean is `psum(values) / count`. Normalized weights are `v_i = w_i / psum(w)`.
+
+### 15.4 Randomness
+
+All randomness comes from Philox streams (section 5) with documented stream
+ids under a master seed supplied by the caller:
+
+| Use | Stream id |
+|---|---|
+| chunked dCorr2 permutation (16.1.2) | `0x20001` |
+| head initialization (17.2) | `0x30000` |
+| shuffle of epoch `e` (17.6) | `0x310000000 + e` |
+| SW1 projection directions (19.2) | `0x40001` |
+| HNSW levels (19.3) | `0x40002` |
+| graph layout (19.5) | `0x40003` |
+| synthetic sample, split `s` (17.8) | `0x50000 + s` (wrapping) |
+| conformance case (11.5) | first 8 bytes of SHA3-256 of the case id |
+
+Integer draws: `uniform_below(bound)` draws `r = next_u64()` until
+`r <= 2^64 - 1 - ((2^64 - 1) mod bound + 1) mod bound` and returns
+`r mod bound` (unbiased rejection). Permutations: Fisher-Yates from the
+identity, `for i = n-1 down to 1: swap(p[i], p[uniform_below(i + 1)])`.
+Unit and normal variates as in section 5.4.
+
+### 15.5 Sorting
+
+Sorts of floating-point keys use the IEEE totalOrder (`f64::total_cmp`)
+with ties broken by ascending element index; descending sorts order keys
+descending and ties by ascending index. Candidate sets in HNSW are ordered by
+the pair `(distance, id)` in this total order.
+
+### 15.6 Output formats
+
+* **Tensors.** Floating-point results that leave the core are tensors
+  (little-endian binary64, or binary32 for Tier-1 outputs, in a documented
+  order) referenced by OIDs (section 9.2).
+* **JSON.** Reports, manifests, calibration constants and graphs are RFC
+  8785 canonical JSON (`vikshep_numerics::jcs`): members sorted by the
+  UTF-16 code units of their keys, no whitespace, minimal string escapes,
+  and numbers written as ECMAScript `Number::toString` writes binary64
+  values: the shortest decimal digit string that round-trips (ties between
+  equally short candidates resolved to the even digit), in fixed notation
+  when the decimal exponent `n` satisfies `-6 < n <= 21` and in exponential
+  notation (`1e+21`, `1.5e-7`) otherwise; `-0` is written `0`. NaN and
+  infinities are not representable: an undefined statistic is `null`.
+  Integers MUST stay within `2^53` in magnitude; 64-bit identifiers such as
+  seeds are written as decimal strings. Files end with one newline. The
+  formatter matches Node.js `String(x)` on a committed fixture of 6170 values
+  (`crates/vikshep-numerics/tests/fixtures/ecmascript_numbers.txt`, generator
+  `oracles/jcs_numbers/gen.sh`), on the RFC 8785 Appendix B samples, and on
+  256356 further values checked during development, and JavaScript
+  reproduces the stored reports byte for byte with
+  `JSON.stringify(JSON.parse(x))`.
+* **Markdown.** Numbers are written with exactly six digits after the
+  decimal point, correctly rounded from the binary64 value with ties to even
+  (Rust's exact decimal formatting); `-0.000000` is written `0.000000`, and
+  `null` is written `n/a`.
+
+---
+
+## 16. Statistics
+
+Implementation: `crates/vikshep-stats`.
+
+### 16.1 Weighted distance correlation
+
+Inputs: `x`, `y`, optional weights `w` (default all 1), equal lengths `n`,
+finite values, weights finite, non-negative and not all zero (otherwise an
+error). For `n < 2` the value is 0.
+
+#### 16.1.1 Exact statistic (normative)
+
+```
+v_i     = w_i / psum(w)
+r_i     = psum_j( v_j * |x_i - x_j| )                 # row means of a_ij
+mu      = psum_i( v_i * r_i )
+A_ij    = ((|x_i - x_j| - r_i) - r_j) + mu            # B_ij likewise for y
+S_i^xy  = psum_j( (v_j * A_ij) * B_ij )               # S^xx, S^yy likewise
+dCov2   = psum_i( v_i * S_i )                         # for xy, xx, yy
+dCorr2  = dCov2_xy / sqrt(dCov2_xx * dCov2_yy)
+```
+
+`dCorr2` is defined as `0` when `dCov2_xx * dCov2_yy <= 0` or its square root
+is below `1e-12`. Cost O(n^2) time and O(n) memory per row. The weighted
+form is the Szekely-Rizzo statistic with every mean weighted by `w`: row and
+column means normalized by `sum(w)` and the grand mean by `sum(w)^2`.
+
+#### 16.1.2 Chunked estimator
+
+`dcorr2_chunked` is an estimator of dCorr2, not the statistic: with
+`c = min(4096, floor(n / 2))` (exact statistic if `c < 4`), permute the
+events with `Stream(seed, 0x20001)`, cut the permutation into consecutive
+chunks of `c` events (a final partial chunk is dropped), compute the exact
+statistic of each chunk with its own weights, and return
+`psum(chunk values) / chunks`. `weighted_dcorr2` uses the exact statistic for
+`n <= 10000` and the chunked estimator with seed 0 above (the threshold of
+the Python reference; its permutation differs, see section 12.4).
+
+### 16.2 Exact gradient
+
+For scores `s` and a fixed protected variable `m` (derivation:
+`docs/disco_gradient.md`), with `D = dCov2(s, m)`, `Vs = dCov2(s, s)`,
+`Vm = dCov2(m, m)`, `den = sqrt(Vs * Vm)` and `c = D / Vs`:
+
+```
+g_k = ((2 * v_k) / den) * psum_j( (v_j * sign(s_k - s_j)) * (B_kj - c * A_kj) )
+```
+
+with `sign(0) = 0` (a subgradient at ties) and `g = 0` wherever dCorr2 is
+defined as 0. The returned value is computed exactly as in 16.1.1.
+
+#### 16.2.1 Pearson-proxy fast mode
+
+`pearson_proxy_grad` is the gradient of the squared weighted Pearson
+correlation, as in the public Vikshep CLI: with `v_i = w_i / (psum(w) +
+1e-12)`, weighted means `mu_s`, `mu_m`, `ds = s - mu_s`, `dm = m - mu_m`,
+`cov = psum(ds dm v)`, `var_s = psum(ds^2 v) + 1e-12`,
+`var_m = psum(dm^2 v) + 1e-12`, `sd = sqrt(var_s var_m)`, `r = cov / sd`:
+`g_i = 2 r v_i (dm_i / sd - r ds_i / var_s)`. It captures linear dependence
+only and is labelled a fast mode wherever it is offered.
+
+### 16.3 Jensen-Shannon divergence
+
+Binning (fixed range): `lo` and `hi` are the minimum and maximum of the
+reference sample (the pre-cut background protected variable); `n_bins`
+equal-width bins; `bin(v) = 0` if `hi <= lo`, else with
+`t = ((v - lo) / (hi - lo)) * n_bins`, `bin(v) = 0` if `t <= 0`, otherwise
+`min(floor(t), n_bins - 1)`. A weighted histogram holds, per bin, the `psum`
+of the weights of its events in event order. For histograms `p`, `q`:
+
+```
+P = p / psum(p);  Q = q / psum(q);  M_i = 0.5 * (P_i + Q_i)
+KL(A || M) = psum_i( A_i == 0 ? 0 : A_i * ln(A_i / M_i) )
+JSD = 0.5 * KL(P || M) + 0.5 * KL(Q || M)                 # nats, in [0, ln 2]
+```
+
+JSD is undefined (an error, reported as `null`) when either histogram is
+empty.
+
+### 16.4 Cut at a target signal efficiency
+
+Sort the signal events by score descending (section 15.5); accumulate their
+weights sequentially in that order until the running sum reaches
+`target * psum(signal weights)`; the score reached is the threshold
+`t_cut`. Every event with `score >= t_cut` passes. Passing signal `s` and
+background `b` are `psum`s of passing weights in event order; efficiencies
+are `s / psum(signal weights)` and `b / psum(background weights)`. Default
+target: 0.5.
+
+### 16.5 Asimov significance proxy
+
+**Asimov proxy, not a Wilks fit**: a closed-form expected significance from
+the weighted counts of one cut, not a likelihood-ratio test:
+
+```
+Z_A = sqrt(2 * max((s + b) * ln(1 + s / b) - s, 0))     for s >= 0, b > 0
+```
+
+and `null` (undefined) when `b <= 0`. Every report labels it as above.
+
+### 16.6 Lambda-frontier rows
+
+For a model with DisCo strength `lambda`, scored on an evaluation set: the
+cut of 16.4, `Z_A` of 16.5, the JSD of 16.3 between the pre-cut and post-cut
+background histograms of the protected variable (`n_bins` default 20; `null`
+when no background passes), and `dcorr2_bkg`, the weighted dCorr2 of score
+and protected variable on the background events (16.1). Fields:
+`lambda, threshold, s, b, sig_eff, bkg_eff, z_asimov, jsd, dcorr2_bkg`.
+
+### 16.7 Benchmark report
+
+`report.json` (canonical JSON, section 15.6) has the members `config`,
+`frontier` (rows in sweep order), `inputs` (dataset and model OIDs, event
+counts), `kind = "vikshep.benchmark_report"`, `numerics_version`,
+`significance_method = "Asimov proxy, not a Wilks fit"`, `tier2_version`
+and `win_condition` (`rule`, `lambda_star`, `delta_sigma`, `delta_jsd`,
+`result`). The **win condition** is evaluated at `lambda_star` (a lambda of
+the sweep) against the unique `lambda = 0` row:
+
+```
+Delta-sigma = Z_A(lambda_star) - Z_A(0)
+Delta-JSD   = JSD(lambda_star) - JSD(0)
+result      = TRUE  if Delta-sigma > 0 AND Delta-JSD <= 0,  else FALSE
+```
+
+`result` is `FALSE` when either difference is undefined. `report.md`
+renders the configuration and inputs as canonical JSON, the frontier table
+(numbers as in section 15.6) and the verdict line `Result: **TRUE**` or
+`Result: **FALSE**`. The report bytes are part of the conformance suite
+(section 11.5) and identical across platforms.
+
+---
+
+## 17. Training
+
+Implementation: `crates/vikshep-train`.
+
+### 17.1 Data and standardization
+
+A dataset holds `n` events with `d` frozen features (row-major binary64),
+labels (1 signal, 0 background), non-negative weights and the protected
+variable; its canonical bytes are `x`, `y` (one byte each), `w`, `m`. Features
+are standardized as in the public CLI: `mu_j = psum_i(x_ij) / n`,
+`std_j = sqrt(psum_i((x_ij - mu_j)^2) / n) + 1e-8`,
+`x'_ij = (x_ij - mu_j) / std_j`. Features from C1 ratios: per event and r2
+path, `psum` over output positions of the ratio divided by their count.
+
+### 17.2 Heads and initialization
+
+* Logistic: `z = b + dot(theta, x')`; parameters `[b, theta_0..theta_{d-1}]`.
+* MLP with `H` hidden tanh units: `a_h = b1_h + dot(W1_h, x')`,
+  `z = b2` then `z += W2_h * tanh(a_h)` for `h = 0..H-1`; parameters
+  `[W1 (H x d, row-major), b1 (H), W2 (H), b2]`.
+
+Initialization from `Stream(seed, 0x30000)`, drawing standard normals `z`
+in parameter order: logistic `theta_j = 0.01 z`, `b = 0`; MLP
+`W1 = sqrt(1/d) z`, `b1 = 0`, `W2 = sqrt(1/H) z`, `b2 = 0`.
+
+### 17.3 Activations
+
+`sigmoid(z) = 1 / (1 + exp(-z))` for `z >= 0` and `e / (1 + e)`,
+`e = exp(z)`, for `z < 0`; `tanh(a) = sign(a) (1 - e) / (1 + e)`,
+`e = exp(-2 |a|)`; `softplus(z) = max(z, 0) + ln(1 + exp(-|z|))`.
+
+### 17.4 DisCo loss and gradient
+
+For a minibatch `B` (events in batch order), `v_i = w_i / psum_B(w)` (a
+batch with non-positive total weight contributes loss 0 and gradient 0):
+
+```
+L     = psum_B( v_i * (softplus(z_i) - y_i * z_i) ) + lambda * R
+dz_i  = v_i * (yhat_i - y_i)                                yhat = sigmoid(z)
+dz_k += ((lambda * g_k) * yhat_k) * (1 - yhat_k)            background k in B
+grad_p = psum_B( dz_i * dz_i/dparam_p )
+```
+
+The dependence term uses the background events of the batch (at least two,
+and `lambda != 0`): with exact gradients `(R, g)` = dCorr2 of their scores and
+protected values with their weights and its exact gradient (16.2); in the
+Pearson-proxy fast mode `g` is the proxy (16.2.1) and `R` is not added to the
+logged loss.
+
+### 17.5 Adam
+
+Constants `beta1 = 0.9`, `beta2 = 0.999`, `eps = 1e-8`, learning rate `lr`
+(default 0.01). Step `t` (from 1), per parameter, with running products
+`beta1^t`, `beta2^t` (no `powf`):
+
+```
+m = beta1 * m + (1 - beta1) * g
+v = beta2 * v + (1 - beta2) * (g * g)
+p = p - lr * (m / (1 - beta1^t)) / (sqrt(v / (1 - beta2^t)) + eps)
+```
+
+### 17.6 Schedule and outputs
+
+Fit the standardization, initialize, then for epoch `e = 0..epochs-1`
+permute the events with `Stream(seed, 0x310000000 + e)` and process
+consecutive minibatches of `batch_size` events (the last may be smaller),
+one Adam step each. The epoch loss is the mean of the batch losses
+(section 15.3). Defaults: 20 epochs, batch 256, `lr = 0.01`, `lambda = 0`,
+exact gradients. A trained model's canonical bytes are `mu`, `std`, the
+parameters and the epoch losses (binary64 LE); predictions are
+`sigmoid(z)` of standardized rows.
+
+### 17.7 Lambda sweep and benchmark
+
+For each lambda of the sweep (which MUST contain 0 exactly once), train with
+the same configuration and seed on the training set, score the evaluation
+set, and build its frontier row (16.6). The benchmark report (16.7) records
+the configuration (`batch_size`, `epochs`, `gradient`, `head`,
+`lambda_star`, `lambdas`, `lr`, `n_bins`, `seed`, `target_sig_eff`) and the
+inputs (training and evaluation OIDs and sizes, feature count, model OIDs).
+
+### 17.8 Synthetic benchmark sample
+
+Drawn sequentially from `Stream(seed, 0x50000 + split)` (wrapping), with
+`d >= 2` features; per event: `u = next_f64_unit()`, signal if `u < 0.3`;
+protected variable `m = 120 + 8 z` (signal) or `50 + 150 u'` (background);
+features `x0 = (signal ? 1 : 0) + z`, `x1 = 0.04 (m - 100) + z`,
+`x2..x_{d-1} = z`; weight 1 (signal) or `0.5 + u''` (background). `x1` makes
+an unconstrained classifier sculpt the background `m` distribution, which
+the DisCo term counteracts.
+
+---
+
+## 18. Calibration
+
+`vikshep_train::calibrate::ridge`: ridge regression in closed form, as in the
+public CLI's `train_calibrate` (ridge `1e-4` by default):
+
+1. Standardize the features (17.1).
+2. `G_jk = psum_i(x'_ij x'_ik) + ridge [j = k]`, `c_j = psum_i(x'_ij t_i)`.
+3. Cholesky `G = L L^T`: for `i` ascending and `j = 0..=i`,
+   `s = G_ij - sum_{k<j} L_ik L_jk` (sequential), `L_ii = sqrt(s)` (an error
+   unless `s > 0`), `L_ij = s / L_jj`.
+4. Forward substitution `L y = c`, backward substitution `L^T w = y`
+   (sequential inner sums).
+5. `bias = psum(t) / n - psum_i(dot(x'_i, w)) / n`; residuals
+   `t_i - (dot(x'_i, w) + bias)`; `r2 = 1 - ss_res / (ss_tot + 1e-12)`;
+   `residual_std` = population standard deviation of the residuals.
+
+Exports: the residual tensor (binary64 LE, with its OID) and the calibration
+constants as canonical JSON (`bias`, `coef`, `kind = "vikshep.calibration"`,
+`mu`, `r2`, `residual_std`, `residuals_oid`, `std`).
+
+---
+
+## 19. Anomaly search
+
+Implementation: `crates/vikshep-anomaly`.
+
+### 19.1 Fingerprint distributions
+
+An event's fingerprint distribution is the equal-weight empirical
+distribution of its per-position log-coefficient vectors: for each output
+position `s` of the scattering output, the point
+`f_s = (ln(2^-20 + |c_{p,s}|))_p` with one coordinate per path `p`. Its mean
+is exactly the log-mean fingerprint of section 14.9. A single log-mean
+vector (a one-point cloud) is also accepted.
+
+The public Vikshep repository has no normative SW1 definition (its web
+explorer uses an 8-angle illustration), so this section is the definition.
+
+### 19.2 Sliced Wasserstein-1
+
+Directions: `P` unit vectors in `R^D` from `Stream(seed, 0x40001)`: direction
+`k` has components `g_kc = next_normal_f64()` (drawn for `k`, then `c`) divided
+by `sqrt(psum_c(g_kc^2))` (the first basis vector if the norm is 0).
+Projection: sequential dot product of each point with each direction; the
+projections of a cloud are sorted ascending (section 15.5).
+
+1-D W1 between equal-weight empirical distributions with sorted samples
+`a` (n values) and `b` (m values) is `integral |F_a(z) - F_b(z)| dz`,
+computed by merging the samples (on equal values `a` first) and summing, by
+`psum`, the terms `(|i m - j n| / (n m)) * (z_next - z)` over consecutive
+merged values, where `i`, `j` count the values of `a`, `b` already passed.
+
+`SW1(A, B) = psum_k( W1(A_k, B_k) ) / P`. Default `P = 32`.
+
+### 19.3 HNSW index
+
+Malkov and Yashunin's hierarchical navigable small world graph (2018,
+Algorithms 1 and 2) with the simple neighbour selection, made deterministic:
+
+* insertion single-threaded, in input order;
+* node level `floor(-ln(u) / ln(M))`, `u = 1 - next_f64_unit()` from
+  `Stream(seed, 0x40002)`, drawn per inserted node, capped at 16;
+* at insertion, greedy descent with `ef = 1` from the top level to the
+  node's level + 1, then on each layer from `min(level, top)` down to 0 a
+  search with `ef_construction`; the node links to the `M` nearest found;
+  each new neighbour links back, and a neighbour list longer than its cap
+  (`2M` on layer 0, `M` above) is cut to the cap nearest by
+  `(distance, id)`;
+* SEARCH-LAYER keeps candidates and results ordered by `(distance, id)`
+  (section 15.5) and stops when the nearest candidate is worse than the
+  worst result;
+* `knn(q, k)`: greedy descent to layer 1, then a layer-0 search with
+  `max(ef_search, k)`; the first `k` results.
+
+Defaults: `M = 8`, `ef_construction = 64`, `ef_search = 32`. Canonical graph
+bytes (`u32` little-endian): node count, entry point, top level, then per
+node its level and, for each layer `0..=level`, the neighbour count followed
+by the neighbour ids in stored order.
+
+### 19.4 Detection
+
+A query is flagged when its distance to the `k`-th nearest reference
+exceeds `tau`. For the reference set itself (leave-one-out), each event
+searches `k + 1` neighbours and ignores itself. With fewer than `k`
+neighbours the distance is undefined (`NaN` in tensors, section 2.6) and the
+event is not flagged.
+
+### 19.5 Layout
+
+Fruchterman-Reingold in the unit square, fixed iteration count `T`
+(default 100): initial positions `(u, u)` per node from
+`Stream(seed, 0x40003)`; `k = sqrt(1 / n)`; at iteration `t` the
+temperature is `0.1 (1 - t / T)`; every ordered pair repels with force
+`k^2 / d` (sums in increasing `j`); every edge attracts with `d^2 / k`
+(edges in output order); each node moves along its displacement by at most
+the temperature; coordinates are clamped to `[0, 1]`; distances below
+`1e-9` are raised to `1e-9`.
+
+### 19.6 Output contract
+
+The graph output never contains features or fingerprints. Canonical JSON
+(section 15.6):
+
+```
+{ "config_digest": "<SHA3-256 of the canonical configuration>",
+  "edges": [ {"i": int, "j": int, "sw1": number}, ... ],
+  "nodes": [ {"flagged": bool, "id": int, "x": number, "y": number}, ... ],
+  "numerics_version": 1, "tau": number, "tier2_version": 1 }
+```
+
+Nodes are the reference events (leave-one-out flags) followed by optional
+queries (ids after the references, flagged against the references). Edges
+are the undirected layer-0 HNSW links `(i, j)`, `i < j`, sorted, followed by
+each query's links to its `k` nearest references. The configuration object
+hashed into `config_digest` has the members `directions`,
+`distance = "sliced_wasserstein_1"`, `ef_construction`, `ef_search`,
+`fingerprint = "log_coefficients_per_position"`, `k`, `layout_iterations`,
+`m`, `seed` (decimal string) and `tau`.
+
+---
+
 ## Appendix A: References
 
 - IEEE 754-2019, Standard for Floating-Point Arithmetic.
@@ -1118,3 +1630,19 @@ Each scattering run is described by an RFC 8785 manifest
 - J. Bruna, S. Mallat, "Invariant scattering convolution networks", IEEE
   TPAMI 35(8), 2013.
 - RFC 2119, RFC 8174 (requirement key words).
+- G. J. Szekely, M. L. Rizzo, N. K. Bakirov, "Measuring and testing
+  dependence by correlation of distances", Annals of Statistics 35(6), 2007.
+- G. Kasieczka, D. Shih, "Robust jet classifiers through distance
+  correlation", Physical Review Letters 125, 122001 (2020).
+- G. Cowan, K. Cranmer, E. Gross, O. Vitells, "Asymptotic formulae for
+  likelihood-based tests of new physics", EPJ C 71, 1554 (2011).
+- D. P. Kingma, J. Ba, "Adam: a method for stochastic optimization", ICLR 2015.
+- N. Bonneel, J. Rabin, G. Peyre, H. Pfister, "Sliced and Radon Wasserstein
+  barycenters of measures", J. Math. Imaging Vision 51, 2015.
+- Y. A. Malkov, D. A. Yashunin, "Efficient and robust approximate nearest
+  neighbor search using hierarchical navigable small world graphs", IEEE
+  TPAMI 42(4), 2020 (arXiv 2016).
+- T. M. J. Fruchterman, E. M. Reingold, "Graph drawing by force-directed
+  placement", Software: Practice and Experience 21(11), 1991.
+- Public Vikshep repository, https://github.com/samvardhan03/Vikshep
+  (Python reference metric for section 12.4).

@@ -1,6 +1,6 @@
 [package]
 name = "vikshep-stats"
-description = "Deterministic statistics: weighted distance correlation, Jensen-Shannon divergence"
+description = "Deterministic Tier-2 statistics: weighted dCorr2 and gradient, JSD, Asimov proxy, benchmark report"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,6 +10,12 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+vikshep-detmath.workspace = true
+vikshep-numerics.workspace = true
+rayon.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true

@@ -1,113 +1,15 @@
 //! Provenance manifests (VDS-1 section 9.3): JSON serialized with the JSON
-//! Canonicalization Scheme (RFC 8785) and hashed with SHA3-256.
+//! Canonicalization Scheme (RFC 8785, `vikshep_numerics::jcs`) and hashed
+//! with SHA3-256.
 //!
 //! Manifests carry identifiers, integers and strings only, never result
-//! floats, so the canonical form needs no number formatting beyond
-//! integers.
-
-use std::collections::BTreeMap;
+//! floats.
 
 use vikshep_numerics::NUMERICS_VERSION;
-use vikshep_numerics::oid::{hex, sha3_256};
+pub use vikshep_numerics::jcs::Value;
+use vikshep_numerics::jcs::object as obj;
 
 use crate::config::ScatterConfig;
-
-/// A JSON value without floating-point numbers.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Value {
-    /// `null`
-    Null,
-    /// `true` / `false`
-    Bool(bool),
-    /// An integer (|v| <= 2^53 for interoperability).
-    Int(i64),
-    /// A string.
-    Str(String),
-    /// An array.
-    Array(Vec<Value>),
-    /// An object; keys sorted (ASCII keys sort identically by UTF-16 code
-    /// units and by bytes).
-    Object(BTreeMap<String, Value>),
-}
-
-fn write_str(out: &mut String, s: &str) {
-    out.push('"');
-    for ch in s.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\u{08}' => out.push_str("\\b"),
-            '\u{0c}' => out.push_str("\\f"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-}
-
-impl Value {
-    /// RFC 8785 canonical serialization.
-    ///
-    /// # Panics
-    /// If an object key is not ASCII (key ordering would then need UTF-16
-    /// comparison, which manifests never require).
-    #[must_use]
-    pub fn canonical(&self) -> String {
-        let mut s = String::new();
-        self.write(&mut s);
-        s
-    }
-
-    fn write(&self, out: &mut String) {
-        match self {
-            Self::Null => out.push_str("null"),
-            Self::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
-            Self::Int(i) => out.push_str(&i.to_string()),
-            Self::Str(s) => write_str(out, s),
-            Self::Array(a) => {
-                out.push('[');
-                for (i, v) in a.iter().enumerate() {
-                    if i > 0 {
-                        out.push(',');
-                    }
-                    v.write(out);
-                }
-                out.push(']');
-            }
-            Self::Object(m) => {
-                out.push('{');
-                for (i, (k, v)) in m.iter().enumerate() {
-                    assert!(k.is_ascii(), "manifest keys must be ASCII");
-                    if i > 0 {
-                        out.push(',');
-                    }
-                    write_str(out, k);
-                    out.push(':');
-                    v.write(out);
-                }
-                out.push('}');
-            }
-        }
-    }
-
-    /// SHA3-256 of the canonical serialization, lowercase hex.
-    #[must_use]
-    pub fn hash(&self) -> String {
-        hex(&sha3_256(self.canonical().as_bytes()))
-    }
-}
-
-fn obj(entries: Vec<(&str, Value)>) -> Value {
-    Value::Object(
-        entries
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect(),
-    )
-}
 
 /// The configuration as a manifest value.
 #[must_use]
@@ -173,7 +75,7 @@ mod tests {
             ("a", Value::Str("x\"y\\z\n\u{1}".into())),
         ]);
         assert_eq!(
-            v.canonical(),
+            v.canonical().unwrap(),
             r#"{"a":"x\"y\\z\n\u0001","b":[-1,true,null]}"#
         );
     }
@@ -181,7 +83,9 @@ mod tests {
     #[test]
     fn keys_sort_by_code_unit() {
         // Uppercase sorts before lowercase in RFC 8785 (code-unit order).
-        let s = config_value(&ScatterConfig::one_d(256, 2, 1, PadPolicy::Circular)).canonical();
+        let s = config_value(&ScatterConfig::one_d(256, 2, 1, PadPolicy::Circular))
+            .canonical()
+            .unwrap();
         assert!(
             s.starts_with(r#"{"J":2,"L":1,"Q":1,"carrier_cutoff":1,"#),
             "{s}"

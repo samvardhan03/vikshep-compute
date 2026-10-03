@@ -41,6 +41,9 @@ vikshep-backend-api = { path = "crates/vikshep-backend-api" }
 vikshep-cpu = { path = "crates/vikshep-cpu" }
 vikshep-capi = { path = "crates/vikshep-capi" }
 vikshep-scatter = { path = "crates/vikshep-scatter" }
+vikshep-stats = { path = "crates/vikshep-stats" }
+vikshep-train = { path = "crates/vikshep-train" }
+vikshep-anomaly = { path = "crates/vikshep-anomaly" }
 
 [workspace.lints.rust]
 # Every crate forbids unsafe code except vikshep-capi and vikshep-py, which

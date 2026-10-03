@@ -16,6 +16,13 @@ const SUBSET: &[&str] = &[
     "scatter/1d/256/J2-",
     "scatter/1d/256/J4-Q2-L1/",
     "scatter/2d/32x32/J2-Q1-L4/",
+    "tier2/dcorr_exact/n200/",
+    "tier2/dcorr_grad/n64/",
+    "tier2/pearson_proxy/",
+    "tier2/jsd/",
+    "tier2/train/logistic/exact/lambda0/",
+    "tier2/calibration/",
+    "tier2/sw1/",
 ];
 
 fn subset() -> Vec<String> {

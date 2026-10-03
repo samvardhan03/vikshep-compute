@@ -31,8 +31,17 @@ cbindgen --config crates/vikshep-capi/cbindgen.toml --crate vikshep-capi \
          --output include/vikshep_backend.h
 ```
 
-The Kymatio oracle fixtures are regenerated only on purpose, never in CI:
-`pip install kymatio==0.3.0 numpy scipy && python3 oracles/kymatio_fixtures.py`.
+Oracle fixtures are regenerated only on purpose, never in CI:
+
+```sh
+# Kymatio correctness oracle
+pip install kymatio==0.3.0 numpy scipy && python3 oracles/kymatio_fixtures.py
+# Parity with the public Vikshep Python metric
+git clone https://github.com/samvardhan03/Vikshep /path/to/Vikshep
+PYTHONPATH=/path/to/Vikshep/backend/ingest/src python3 oracles/python_disco/gen_fixtures.py
+# ECMAScript number formatting for canonical JSON (needs python3 and node)
+bash oracles/jcs_numbers/gen.sh
+```
 
 ## Numerics rules
 
@@ -48,8 +57,15 @@ These follow from [`spec/VDS-1.md`](spec/VDS-1.md):
 - Any change that alters an output bit (arithmetic order, tables, filters,
   algorithms, constants, generator definitions, the pinned `libm` version)
   requires a `numerics_version` bump and new conformance vectors
-  (`vikshep-conformance generate`). Within one version, cases may be added
-  but existing expected outputs must not change.
+  (`vikshep-conformance generate`). A change confined to the Tier-2
+  operations of VDS-1 sections 15 to 19 (statistics, training, calibration,
+  anomaly search, report formats) bumps `tier2_version` instead. Within one
+  version, cases may be added but existing expected outputs must not change.
+- Tier-2 code sums over events with `vikshep_numerics::sum::pairwise_sum`,
+  draws randomness only from Philox streams registered in VDS-1 section
+  15.4, sorts with `f64::total_cmp` and an index tie-break
+  (`vikshep_numerics::order`), and writes JSON only through
+  `vikshep_numerics::jcs`.
 - Backends execute only the five kernels of VDS-1 section 14.6; pooling,
   ratios and reductions stay on the host.
 - Exceptions to the determinism lint go in `scripts/determinism-lint.allow`,

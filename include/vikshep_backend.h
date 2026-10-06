@@ -55,7 +55,8 @@ typedef struct VkspCapabilities {
   uint32_t max_log2_len;
   // Non-zero if canvases are processed in parallel.
   uint8_t parallel;
-  // Non-zero if IEEE subnormals are preserved.
+  // Non-zero if IEEE subnormals are preserved; every VDS-1.1 backend
+  // flushes them (section 8.1) and reports 0.
   uint8_t preserves_subnormals;
 } VkspCapabilities;
 

@@ -6,13 +6,13 @@
 //!     run conformance suite v1; print (or write) the JSON report;
 //!     exit 1 if any case fails
 //! vikshep-conformance generate [--backend B] [--vectors DIR]
-//!     regenerate conformance/vectors/v1 with the CPU reference
+//!     regenerate conformance/vectors/v2 with the CPU reference
 //! vikshep-conformance list
 //!     print every case id with its stream id
 //! vikshep-conformance hashes
 //!     print the C0 determinism-sweep hashes (JSON)
 //! vikshep-conformance check
-//!     compare the sweep hashes with conformance/vectors/v1/hashes.json
+//!     compare the sweep hashes with conformance/vectors/v2/hashes.json
 //! ```
 
 use std::path::PathBuf;
@@ -87,7 +87,7 @@ fn main() -> ExitCode {
                 );
                 ExitCode::SUCCESS
             } else {
-                eprintln!("conformance: MISMATCH against conformance/vectors/v1/hashes.json");
+                eprintln!("conformance: MISMATCH against conformance/vectors/v2/hashes.json");
                 eprint!("{got}");
                 ExitCode::FAILURE
             }

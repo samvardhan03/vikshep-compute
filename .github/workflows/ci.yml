@@ -143,11 +143,11 @@ jobs:
             fi
           done
           for f in "${sweeps[@]}"; do
-            if cmp -s conformance/vectors/v1/hashes.json "$f"; then
+            if cmp -s conformance/vectors/v2/hashes.json "$f"; then
               echo "identical: $f"
             else
               echo "DIFFERS:   $f"
-              diff conformance/vectors/v1/hashes.json "$f" || true
+              diff conformance/vectors/v2/hashes.json "$f" || true
               status=1
             fi
           done

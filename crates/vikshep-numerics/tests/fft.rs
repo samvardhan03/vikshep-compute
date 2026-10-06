@@ -181,3 +181,74 @@ fn inverse_of_delta_spectrum_is_exact_constant() {
         assert!(x.iter().all(|v| *v == Complex32::new(1.0, 0.0)), "N={n}");
     }
 }
+
+/// VDS-1.1: the per-stage fast path of the Stockham FFT (no result flushes
+/// when the operand bounds hold) is bit-identical to flushing every result
+/// in every stage, on inputs spanning every magnitude range, including the
+/// fast-path thresholds and the subnormal range.
+#[test]
+fn fast_path_equals_always_flushed() {
+    use vikshep_numerics::fft::{Real, stockham, stockham_always_flush};
+    let mut s = vikshep_numerics::rng::Stream::new(0x1111, 7);
+    let mut cases = 0;
+    for m in 1..=12u32 {
+        let n = 1usize << m;
+        for scale_log2 in [
+            0, -40, -60, -68, -69, -70, -75, -90, -100, -110, -120, -126, -130, -140,
+        ] {
+            for mix in 0..3 {
+                let x: Vec<Complex32> = (0..n)
+                    .map(|i| {
+                        let mut v = || {
+                            let u = 2.0 * s.next_f32_unit() - 1.0;
+                            let e = match mix {
+                                0 => scale_log2,
+                                // mixed magnitudes: some large, some tiny
+                                1 => {
+                                    if i % 5 == 0 {
+                                        0
+                                    } else {
+                                        scale_log2
+                                    }
+                                }
+                                // values packed near FLT_MIN and 2^-69
+                                _ => {
+                                    if i % 2 == 0 {
+                                        -126
+                                    } else {
+                                        -69
+                                    }
+                                }
+                            };
+                            let b = (u.to_bits() as i64 + (i64::from(e) << 23))
+                                .clamp(0, i64::from(u32::MAX))
+                                as u32;
+                            if e == 0 {
+                                u
+                            } else {
+                                f32::from_bits((u.to_bits() & 0x8000_0000) | (b & 0x7fff_ffff))
+                            }
+                        };
+                        Complex32::new(v(), v())
+                    })
+                    .collect();
+                for table in [f32::twiddles(m), f32::twiddles_inverse(m)] {
+                    let mut a = x.clone();
+                    let mut b = x.clone();
+                    let mut sa = vec![Complex32::default(); n];
+                    let mut sb = vec![Complex32::default(); n];
+                    stockham(&mut a, &mut sa, table);
+                    stockham_always_flush(&mut b, &mut sb, table);
+                    let bits = |v: &[Complex32]| {
+                        v.iter()
+                            .map(|z| (z.re.to_bits(), z.im.to_bits()))
+                            .collect::<Vec<_>>()
+                    };
+                    assert_eq!(bits(&a), bits(&b), "n {n} scale {scale_log2} mix {mix}");
+                    cases += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(cases, 12 * 14 * 3 * 2);
+}

@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use vikshep_backend_api::{BackendError, Canvas, Complex32, ScatterBackend, Twiddles};
 use vikshep_numerics::fft::Real;
+use vikshep_numerics::flush::ftz;
 
 use crate::config::{ConfigError, Group, ScatterConfig};
 use crate::filters::{FilterBank, filter_bank};
@@ -235,7 +236,8 @@ impl Scattering {
         };
         let mut coefficients = vec![0.0f32; batch * n_paths * out_len];
 
-        // 1. Embed every signal in its canvas and transform.
+        // 1. Embed every signal in its canvas (flushing subnormal samples to
+        //    signed zero on the host, VDS-1.1 section 8.1) and transform.
         let mut x = vec![Complex32::default(); batch * clen];
         let axes = self.cfg.axes();
         let (r0, c0, rows_in, cols_in) = if self.cfg.dim == 1 {
@@ -248,7 +250,8 @@ impl Scattering {
             let cv = &mut x[b * clen..(b + 1) * clen];
             for r in 0..rows_in {
                 for c in 0..cols_in {
-                    cv[(r0 + r) * canvas.cols + c0 + c] = Complex32::new(sig[r * cols_in + c], 0.0);
+                    cv[(r0 + r) * canvas.cols + c0 + c] =
+                        Complex32::new(ftz(sig[r * cols_in + c]), 0.0);
                 }
             }
         }

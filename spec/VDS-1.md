@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| Status | Draft. Complete for `numerics_version = 1` (sections 1 to 14) and `tier2_version = 1` (sections 15 to 19); bindings and data plane in section 20 |
-| Numerics version | 1 |
+| Status | Draft, VDS-1.1. Complete for `numerics_version = 2` (sections 1 to 14; flush-to-zero, section 8.1) and `tier2_version = 1` (sections 15 to 19); bindings and data plane in section 20 |
+| Numerics version | 2 (VDS-1.1; version 1 preserved subnormals) |
 | Tier-2 version | 1 |
 | Reference implementation | this repository (`vikshep-compute`), Rust CPU code |
 | Copyright | Samvardhan Singh |
@@ -90,8 +90,11 @@ or otherwise transform floating-point expressions.
 - square root, which MUST be correctly rounded (see open decision D-SQRT);
 - comparisons;
 - exact power-of-two scaling (multiplication by `2^k`, which is exact unless
-  the result is subnormal or overflows; with subnormals preserved it is still
-  correctly rounded and therefore deterministic, see section 8).
+  the result is subnormal or overflows; a subnormal result is flushed to
+  zero, section 8.1).
+
+Under VDS-1.1 every binary32 Tier-1 operation is followed by the flush of
+section 8.1, and its operands are flushed before use.
 
 2.5. The following MUST NOT appear in Tier-1 kernels:
 
@@ -258,7 +261,9 @@ The domains include overflow of `exp` to infinity, underflow to subnormals
 and zero, `ln` of +0 and of subnormals, and argument reduction of the largest
 finite arguments. No sweep output is NaN (checked).
 
-The expected hashes are in `conformance/vectors/v1/hashes.json`.
+The expected hashes are in `conformance/vectors/v2/hashes.json` (identical to
+`v1/hashes.json` apart from the `numerics_version` field: the sweeps run no
+Tier-1 arithmetic).
 `cargo run -p vikshep-conformance -- hashes` prints the report; CI runs it on
 every platform of section 1.2 and fails if any report differs from the
 committed vectors.
@@ -384,7 +389,7 @@ Both tables are tested in `crates/vikshep-numerics/src/rng.rs`.
 
 With master seed `0x56445331`, one million values each, serialized
 little-endian and hashed with SHA3-256 (vectors in
-`conformance/vectors/v1/hashes.json`):
+`conformance/vectors/v2/hashes.json`):
 
 | Case | Stream id | Values |
 |---|---:|---|
@@ -428,6 +433,11 @@ fft0(n, s, eo, x, y):          # n: current length, s: stride, eo: parity
 forward FFT of length N: fft0(N, 1, false, x, y); result is in x
 ```
 
+VDS-1.1 (section 8.1): in binary32 every component of `a`, `b` and `w` is
+flushed before use, and every individual sum, difference and product above
+is flushed after rounding, for example
+`y1.re = ftz(ftz(d.re*w.re) - ftz(d.im*w.im))` with `d.re = ftz(a.re - b.re)`.
+
 ### 6.3 Evaluation order
 
 - `a + b` and `a - b` are componentwise, one rounding per component.
@@ -462,7 +472,7 @@ exp(-2*pi*i*j*k/N)`.
 The inverse transform runs the same recursion with the conjugate table
 `TWC[p] = (TW[p].re, -TW[p].im)` and then multiplies every component of the
 result by the exact constant `2^-m`. That multiplication is exact unless the
-result is subnormal, in which case it is correctly rounded (section 8).
+result is subnormal, in which case it is flushed to zero (section 8.1).
 
 ### 6.6 Two-dimensional transforms
 
@@ -546,32 +556,79 @@ IEEE-754 correctly rounded result.  The GPU's MODE register on AMD GCN sets
 provides no MSL control to clear these bits.
 
 **VDS-1.1 consequence (step 3 of section 8.2):** D-FTZ closes as "flush".
-VDS-1.1 defines flush-to-zero semantics for all backends:
+VDS-1.1 defines flush-to-zero semantics for every backend, normatively:
 
-- Any Tier-1 binary32 input whose absolute value is strictly less than
-  `f32::MIN_POSITIVE` (i.e. a subnormal) is treated as zero of the same sign
-  before the operation, for `+`, `-`, `*`, and `sqrt`.
-- Any Tier-1 binary32 result of `+`, `-`, `*`, and `sqrt` whose absolute value
-  is strictly less than `f32::MIN_POSITIVE` is replaced by zero of the same sign.
-- The CPU reference MUST emulate flush-to-zero in software.
-  Canonical emulation helper:
-  ```rust
-  #[inline(always)]
-  fn ftz(x: f32) -> f32 {
-      if x.abs() < f32::MIN_POSITIVE { 0.0_f32.copysign(x) } else { x }
-  }
-  ```
-  applied to all Tier-1 operands before each operation and to all Tier-1 results.
-- `numerics_version` is incremented from 1 to 2; all conformance vectors MUST
-  be regenerated.
-- No Metal or CUDA backend may claim conformance under `numerics_version = 1`
-  (subnormals-preserved vectors).  Conformance is re-run after regeneration.
+1. **Flush.** `ftz(x)` replaces a binary32 `x` whose magnitude is strictly
+   below FLT_MIN = `2^-126` (`f32::MIN_POSITIVE`; a subnormal, or a zero)
+   by the zero of the same sign, and returns every other value, including
+   infinities and NaNs, unchanged:
+   ```rust
+   #[inline(always)]
+   fn ftz(x: f32) -> f32 {
+       if x.abs() < f32::MIN_POSITIVE { 0.0_f32.copysign(x) } else { x }
+   }
+   ```
+   (implementation: `vikshep_numerics::flush::ftz`, which tests the exponent
+   field and is bit-identical to the above for every binary32 value).
+2. **Inputs and tables (DAZ).** The host applies `ftz` to every binary32
+   element of every Tier-1 input tensor (signals embedded in canvases,
+   kernel inputs of the conformance suite) and of every host-built table
+   (filter banks, twiddle tables) before any kernel runs. Filter tails that
+   round to binary32 subnormals are flushed at table construction (with the
+   truncation of section 14.3.4 no supported filter has one; the
+   `long_tail` conformance cases exercise the rule directly).
+3. **Operations (FTZ).** In every Tier-1 kernel the operands of each
+   addition, subtraction, multiplication and square root are flushed before
+   the operation, and the rounded result is flushed after it: for `+ - *`,
+   `ftz(ftz(a) op ftz(b))`; for the square root, `ftz(sqrt(ftz(a)))`. This
+   includes every butterfly sum, difference and product of the FFT
+   (section 6.2), the inverse scaling by `2^-m`, the filter products, and
+   both squares, the sum and the root of the modulus. `subsample` and the
+   host's copies perform no arithmetic and move values unchanged.
+4. **Boundary rule.** Tininess is judged on the rounded result, the only
+   value a software emulation can observe: a result that rounds to exactly
+   FLT_MIN is kept, even when its exact value was below FLT_MIN. A hardware
+   backend that judged tininess before rounding would differ from the
+   reference only for such results; the conformance cases with input
+   `round_to_flt_min` (section 11.2) produce them, so such a backend fails
+   the suite instead of being assumed equal.
+5. **Sign of zero.** The flush preserves the sign. Later operations on a
+   flushed zero follow IEEE-754 (for example `-0 - (-0) = +0`), and the
+   `signed_zero` conformance cases check both signs.
+6. **Tier 2 is unchanged.** Binary64 host arithmetic (filter construction
+   before the final rounding, the binary64 FFT of section 7.1, pooling, r2,
+   the log-mean fingerprint, statistics, training, calibration and anomaly
+   search) does not flush; it runs only in the CPU reference.
+7. **Versions.** `numerics_version` is 2. Conformance vectors are in
+   `conformance/vectors/v2/` (suite v2, section 11.2); `v1/` is kept for
+   history and no backend can claim conformance against it.
+
+An implementation MAY omit a flush that it can prove is the identity (an
+operand that is the flushed result of an earlier operation, or a result
+that provably cannot be subnormal); the bits MUST NOT change. The CPU
+reference flushes each FFT input and twiddle once when loaded, and runs an
+FFT stage without its result flushes when every nonzero operand of the stage
+has magnitude at least `2^-69` and every nonzero twiddle component at least
+`2^-10`: then every sum and difference is zero or at least `2^-92`, every
+product zero or at least `2^-102`, and every final combination zero or at
+least `2^-125`, so no result can be subnormal. A test compares this path bit
+for bit with flushing every result
+(`crates/vikshep-numerics/tests/fft.rs`), and suite v2 was generated with
+the unoptimized form.
+
+The CPU reference MUST emulate the flush in software (`ftz` after every
+operation, as above); it MUST NOT depend on processor flags such as MXCSR
+`FTZ`/`DAZ` or AArch64 `FPCR.FZ`, which are not portable and not
+controllable from safe Rust. A hardware backend may rely on its own flush
+behaviour only where the suite proves it identical (section 20.2).
 
 **CPU observations (VDS-1.0):** IEEE subnormals were preserved in the CPU
 reference.  Rust on x86_64 and AArch64 preserves subnormals by default.
 `cpu_preserves_subnormals` (`crates/vikshep-scatter/tests/properties.rs`) and
 the `near_subnormal` conformance cases (section 11.2) all passed bit-exactly on
-every tested CPU platform.  These observations are superseded by VDS-1.1.
+every tested CPU platform.  These observations are superseded by VDS-1.1: the
+test is now `cpu_flushes_subnormals`, and the `near_subnormal` cases change
+under flushing.
 
 ### 8.2 Decision procedure
 
@@ -686,8 +743,10 @@ The grids cover 1-D scattering with N in {256, 1024}, J in {2, 4, 6}, Q in
 inputs; 2-D scattering with N in {32x32, 64x64, 128x128}, J in {1, 2, 3, 4},
 L in {4, 8}, pads circular/circular and zero_pad/circular, both groups, plus
 adversarial inputs, a rectangular zero-padded case with L = 6 and order-1
-cases. Version 1 has 331 cases: 313 Tier-1 and sweep cases (C0, C1) and 18
-Tier-2 cases (C2).
+cases, and the VDS-1.1 adversarial inputs (subnormals, values near FLT_MIN,
+products rounding to FLT_MIN, signed zeros, long-tailed filters). Suite v2
+(`numerics_version = 2`) has 402 cases: 384 Tier-1 and sweep cases (313 from
+suite v1 plus 71 VDS-1.1 adversarial cases) and 18 Tier-2 cases.
 
 **Stream id** of a case: the first 8 bytes, little-endian, of SHA3-256 of its
 identifier. Inputs are drawn from `Stream(master_seed = 0x56445331,
@@ -714,11 +773,22 @@ arithmetic in binary32:
 | `constant` | `0.75` |
 | `impulse` | `1` at row `R/2`, column `C/2`, `+0` elsewhere |
 | `alternating` | `+1` if `r + c` is even, else `-1` |
+| `subnormal` | `bits(r & 0x807fffff)`, `r = next_u32()`: subnormals and signed zeros, all flushed to signed zero by the host |
+| `flt_min_band` | `+/-(2^-126 + k 2^-149)`, `k = r & 63`, sign = bit 31 of `r`: sums and differences below, at and above FLT_MIN |
+| `sqrt_flt_min_band` | `+/-2^-63 (1 + k 2^-23)`, `k = (r & 7) - 3`: squares below, at (`k = 0`) and above FLT_MIN |
+| `round_to_flt_min` | `+/-(2^-126 + k 2^-149)`, `k = r & 3`; filter `1 - 2^-24`: products round up to exactly FLT_MIN (`k = 0`) or stay just above |
+| `long_tail` | `2u - 1`; filter `2^-(i mod 150)` for element `i`: subnormal filter entries flushed on the host |
+| `signed_zero` | `(2u - 1) 2^-100`; filter `2^-30`: every product subnormal, flushed to the zero of its sign |
 
 Complex inputs draw `re` then `im` for each sample for the three random
-kinds, and use the real pattern with `im = +0` for the others. The filter of
-a `mul_real_filter` case is `next_f32_unit()` per element, drawn after the
-input. Scattering cases use `carrier_cutoff = 1`.
+kinds and the six VDS-1.1 kinds (one `next_u32()` or `next_f32_unit()` per
+component, in that order), and use the real pattern with `im = +0` for the
+others. The filter of a `mul_real_filter` case is the one listed above for
+`round_to_flt_min`, `long_tail` and `signed_zero`, otherwise
+`next_f32_unit()` per element, drawn after the input. Inputs are generated
+with IEEE binary32 arithmetic (they may contain subnormals); the host then
+flushes every kernel input and filter (section 8.1, rule 2) before calling
+the backend. Scattering cases use `carrier_cutoff = 1`.
 
 **Outputs.** `S` is the coefficient tensor (section 14.7), `r2` the ratio
 tensor (14.8), `log_mean` the fingerprint (14.9, binary64) and `filters` the
@@ -726,10 +796,10 @@ canonical filter bytes (14.3.4).
 
 ### 11.3 Expected vectors and runner
 
-`conformance/vectors/v1/expected.json` lists, per case and output, the
+`conformance/vectors/v2/expected.json` lists, per case and output, the
 dtype, byte length and SHA3-256; outputs of at most 16384 bytes (except
 `filters` and sweeps) are also stored in full in
-`conformance/vectors/v1/expected.bin` at the recorded offset. The vectors
+`conformance/vectors/v2/expected.bin` at the recorded offset. The vectors
 are produced by the CPU reference with
 
 ```
@@ -756,7 +826,7 @@ The vectors are also compiled into the library
 (`vikshep_conformance_core::suite::selftest`), so the C ABI
 (`vksp_conformance_selftest`, any registered backend) and the Python module
 (`conformance_selftest`) run the suite without files: subset `quick` (the
-case-id prefixes of `QUICK_SUBSET`, 185 cases) or `full` (every case). The
+case-id prefixes of `QUICK_SUBSET`, 256 cases) or `full` (every case). The
 report is the one described above.
 
 ### 11.4 Cross-platform verification
@@ -829,7 +899,9 @@ VDS-1 does not perform (section 14.3.6).
 - Circular-shift covariance: shifting the input by `2^J` samples on circular
   axes shifts every path by one output sample, within `1e-5` of the peak.
 - Exact power-of-two homogeneity of S and r2, bit for bit (section 14.8).
-- Subnormal preservation on the CPU (section 8.1).
+- VDS-1.1 flush-to-zero semantics of the CPU kernels and of the host
+  (section 8.1): `cpu_flushes_subnormals` and the kernel tests of
+  `vikshep-cpu`.
 
 ### 12.3 Low-level references
 
@@ -1039,8 +1111,9 @@ products.
 
 For every filter (1-D and 2-D): with `T = max_k |h^(k)|`, values with
 `|h^(k)| < 2^-40 * T` become exactly `+0`; the rest are rounded once to
-binary32. Truncation keeps every stored value far from the binary32
-subnormal range, which keeps the exactness argument of section 14.8 valid.
+binary32 and flushed (section 8.1, rule 2). Truncation keeps every stored
+value far from the binary32 subnormal range, which keeps the exactness
+argument of section 14.8 valid.
 
 The filter-bank fingerprint is the lowercase hex SHA3-256 of the canonical
 filter bytes: `phi`, then the first-order bank, then the second-order bank
@@ -1137,9 +1210,11 @@ binary32 complex canvases:
 |---|---|
 | `fft` | forward transform of sections 6.2 and 6.6 with host tables |
 | `ifft` | inverse transform (conjugate tables, `2^-m` per axis) |
-| `mul_real_filter` | `(re, im) -> (re * h, im * h)`, filter `index[b]` for canvas `b` |
-| `modulus` | `(re, im) -> (sqrt(re * re + im * im), +0)`: two products, one addition, correctly rounded `sqrt` |
-| `subsample` | `out[b][a][c] = in[b][F * (o_r + a)][F * (o_c + c)].re` |
+| `mul_real_filter` | `(re, im) -> (ftz(ftz(re) * ftz(h)), ftz(ftz(im) * ftz(h)))`, filter `index[b]` for canvas `b` |
+| `modulus` | `(re, im) -> (ftz(sqrt(ftz(ftz(re * re) + ftz(im * im)))), +0)` (operands flushed): two products, one addition, correctly rounded `sqrt` |
+| `subsample` | `out[b][a][c] = in[b][F * (o_r + a)][F * (o_c + c)].re` (a copy) |
+
+Every operation follows the flush rules of section 8.1 (VDS-1.1).
 
 #### 14.6.2 Ordered invocations
 
@@ -1753,7 +1828,7 @@ one message per line, with the tools `compute_scattering`, `reduce`,
   `signal_len` samples or `[n]` for a batch; 2-D: `[rows, cols]`). The pad
   policy of every axis is a server option (default `zero_pad`), recorded in
   the manifest. `dim = "3"`, `order = 3` and `group = "so3"` are not part of
-  `numerics_version` 1 and are rejected.
+  `numerics_version` 2 and are rejected.
 * **`reduce`**: `ratio` (r2, section 14.8), `log_mean` (14.9), `mean` and
   `std` (14.9).
 * **`compare`, `detect_anomaly`**: the query is one event's coefficients (or

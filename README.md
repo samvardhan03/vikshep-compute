@@ -184,15 +184,16 @@ cargo run --release -p vikshep-conformance -- hashes              # C0 determini
 cargo run --release -p vikshep-conformance -- generate            # regenerate vectors (CPU reference)
 ```
 
-Suite v1 has 331 cases: FFTs for N = 2..4096, the element-wise kernels,
-1-D and 2-D scattering grids with adversarial inputs, the portable-math and
-random-stream sweeps, and the Tier-2 operations (dCorr2, its gradient, JSD,
-training runs, calibration, SW1, HNSW graphs and benchmark reports; VDS-1
-section 11). CI runs it on Linux x86_64,
+Suite v2 (`numerics_version = 2`, VDS-1.1 flush-to-zero) has 402 cases:
+FFTs for N = 2..4096, the element-wise kernels, 1-D and 2-D scattering grids
+with adversarial inputs (including subnormals, values near FLT_MIN, products
+rounding to FLT_MIN and signed zeros), the portable-math and random-stream
+sweeps, and the Tier-2 operations (dCorr2, its gradient, JSD, training runs,
+calibration, SW1, HNSW graphs and benchmark reports; VDS-1 section 11). The
+vectors are in `conformance/vectors/v2/`; `v1/` (subnormals preserved) is
+kept for history. CI runs the suite on Linux x86_64,
 Linux AArch64, macOS arm64 and Windows x86_64 and fails if any case fails or
-any platform's report differs. The vectors are also compiled into the
-library: `vksp_conformance_selftest` (C, any registered backend) and
-`vikshep_compute.conformance_selftest` (Python) run the suite without files.
+any platform's report differs.
 
 ## Licence
 

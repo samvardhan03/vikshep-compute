@@ -119,7 +119,8 @@ pub struct VkspCapabilities {
     pub max_log2_len: u32,
     /// Non-zero if canvases are processed in parallel.
     pub parallel: u8,
-    /// Non-zero if IEEE subnormals are preserved.
+    /// Non-zero if IEEE subnormals are preserved; every VDS-1.1 backend
+    /// flushes them (section 8.1) and reports 0.
     pub preserves_subnormals: u8,
 }
 

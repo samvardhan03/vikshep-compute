@@ -176,7 +176,7 @@ fn tool_list() -> Json {
     json!([
         {
             "name": "compute_scattering",
-            "description": "Wavelet scattering coefficients (VDS-1 section 14) of the float32 tensor input_oid (signal_len samples) in shared memory. Writes the float32 coefficient tensor [batch, paths, out...] under its OID and returns coeff_oid, its shape, numerics_version and the provenance manifest_hash. Supported in numerics_version 1: dim 1 and 2, order 1 and 2, groups trivial and so2; dim 3, order 3 and so3 are rejected.",
+            "description": "Wavelet scattering coefficients (VDS-1 section 14) of the float32 tensor input_oid (signal_len samples) in shared memory. Writes the float32 coefficient tensor [batch, paths, out...] under its OID and returns coeff_oid, its shape, numerics_version and the provenance manifest_hash. Supported: dim 1 and 2, order 1 and 2, groups trivial and so2; dim 3, order 3 and so3 are rejected.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -434,9 +434,7 @@ impl Server {
             Some(_) => return err("dim_shape must be an array"),
         };
         if dim == "3" || group == "so3" || order == 3 {
-            return err(
-                "dim 3, order 3 and group so3 are not supported by numerics_version 1 (see STATUS.md)",
-            );
+            return err("dim 3, order 3 and group so3 are not supported by VDS-1 (see STATUS.md)");
         }
         let (shape, group) = match dim {
             "1" => {

@@ -1,6 +1,6 @@
 //! Property tests (VDS-1 section 12.2): Littlewood-Paley bounds, discarded
-//! imaginary parts, non-expansiveness, circular-shift covariance, and CPU
-//! subnormal preservation (D-FTZ observation).
+//! imaginary parts, non-expansiveness, circular-shift covariance, and the
+//! VDS-1.1 flush-to-zero semantics of the CPU reference (section 8.1).
 
 use vikshep_backend_api::{Canvas, Complex32, ScatterBackend, Twiddles};
 use vikshep_cpu::CpuBackend;
@@ -187,15 +187,16 @@ fn circular_shift_by_grid_step() {
     }
 }
 
-/// D-FTZ observation for the CPU reference: subnormal inputs and results of
-/// the Tier-1 kernels are preserved exactly as IEEE-754 specifies.
+/// VDS-1.1 (section 8.1): subnormal operands of the Tier-1 kernels are
+/// treated as signed zeros and subnormal results are flushed to signed zero;
+/// the scattering driver flushes subnormal input samples on the host.
 #[test]
-fn cpu_preserves_subnormals() {
+fn cpu_flushes_subnormals() {
     let backend = CpuBackend::serial();
-    assert!(backend.capabilities().preserves_subnormals);
+    assert!(!backend.capabilities().preserves_subnormals);
     let tiny = f32::from_bits(0x0000_0400); // 2^-139, subnormal
     assert!(tiny.is_subnormal());
-    // FFT of a subnormal impulse is a constant subnormal spectrum.
+    // FFT of a subnormal impulse: the operand is flushed, the spectrum is 0.
     let canvas = Canvas::one_d(16);
     let mut d = vec![Complex32::default(); 16];
     d[0] = Complex32::new(tiny, 0.0);
@@ -204,30 +205,45 @@ fn cpu_preserves_subnormals() {
         rows: &[],
     };
     backend.fft(&mut d, canvas, &tw).unwrap();
-    assert!(
-        d.iter()
-            .all(|v| v.re.to_bits() == tiny.to_bits() && v.im == 0.0)
-    );
-    // The inverse scaling by 2^-4 produces a smaller subnormal, exactly.
+    assert!(d.iter().all(|v| v.re == 0.0 && v.im == 0.0));
+    // The inverse scaling by 2^-4 of FLT_MIN would be subnormal: flushed.
     let twi = Twiddles {
         cols: f32::twiddles_inverse(4),
         rows: &[],
     };
-    let mut e = vec![Complex32::new(tiny, 0.0); 16];
-    e[1..].iter_mut().for_each(|v| *v = Complex32::default());
+    let min = f32::MIN_POSITIVE;
+    let mut e = vec![Complex32::default(); 16];
+    e[0] = Complex32::new(min, -min);
     backend.ifft(&mut e, canvas, &twi).unwrap();
-    assert_eq!(e[0].re.to_bits(), 0x0000_0040); // 2^-143
-    // Filter multiplication: subnormal times 0.5 is exact.
-    let mut f = vec![Complex32::new(tiny, -tiny); 16];
+    assert_eq!(e[0].re.to_bits(), 0);
+    assert_eq!(e[0].im.to_bits(), 0x8000_0000, "sign of zero preserved");
+    // A butterfly difference of two close normal numbers is subnormal (exact
+    // by Sterbenz) and is flushed.
+    let mut b = [
+        Complex32::new(min, 0.0),
+        Complex32::new(f32::from_bits(0x0080_0001), 0.0),
+    ];
+    let tw2 = Twiddles {
+        cols: f32::twiddles(1),
+        rows: &[],
+    };
+    backend.fft(&mut b, Canvas::one_d(2), &tw2).unwrap();
+    assert!(b[0].re > min);
+    // d = -2^-149 flushes to -0; the rotation by TW[0] = (1, -0) then gives
+    // -0 * 1 - (+0 * -0) = -0 - (-0) = +0 under IEEE rules.
+    assert_eq!(b[1].re.to_bits(), 0);
+    // Filter multiplication: FLT_MIN times 0.5 is subnormal: flushed.
+    let mut f = vec![Complex32::new(min, -min); 16];
     backend
         .mul_real_filter(&mut f, canvas, &[0.5; 16], &[0])
         .unwrap();
-    assert_eq!(f[3].re.to_bits(), 0x0000_0200);
-    assert_eq!(f[3].im.to_bits(), 0x8000_0200);
-    // Modulus of a normal pair with a subnormal result of the square root.
-    let small = f32::from_bits(0x0080_0000); // 2^-126
-    let mut g = [Complex32::new(small, 0.0)];
-    backend.modulus(&mut g).unwrap();
-    // 2^-126 squared underflows to 0 (IEEE), so sqrt gives 0.
-    assert_eq!(g[0].re, 0.0);
+    assert_eq!(f[3].re.to_bits(), 0);
+    assert_eq!(f[3].im.to_bits(), 0x8000_0000);
+    // The scattering driver flushes subnormal samples before any kernel: a
+    // signal of subnormals scatters exactly like zeros.
+    let sc = Scattering::new(ScatterConfig::one_d(64, 2, 1, PadPolicy::Circular)).unwrap();
+    let subn: Vec<f32> = (0..64u32).map(|i| f32::from_bits(1 + i * 1000)).collect();
+    let a = sc.run(&backend, &subn).unwrap();
+    let z = sc.run(&backend, &vec![0.0; 64]).unwrap();
+    assert_eq!(a.canonical_bytes(), z.canonical_bytes());
 }

@@ -50,7 +50,7 @@ with `signal_len` a multiple of `n` (a batch); in 2-D `dim_shape = [rows,
 cols]` and `signal_len` is a multiple of `rows * cols`. `group = "so2"` is the
 `so2_relative` pooling of VDS-1 section 14.5. The contract has no pad field:
 every axis uses the server's `--pad` policy (default `zero_pad`), recorded in
-the manifest configuration. Not supported in `numerics_version` 1: `dim =
+the manifest configuration. Not supported in VDS-1 (`numerics_version` 2): `dim =
 "3"`, `order = 3`, `group = "so3"`, and values the specification excludes
 (for example `J > 11`, odd `L` in 2-D, `L != 1` or `Q > 1` in the wrong
 dimension); such requests return a tool error.

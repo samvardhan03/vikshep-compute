@@ -1753,7 +1753,7 @@ The graph output never contains features or fingerprints. Canonical JSON
 { "config_digest": "<SHA3-256 of the canonical configuration>",
   "edges": [ {"i": int, "j": int, "sw1": number}, ... ],
   "nodes": [ {"flagged": bool, "id": int, "x": number, "y": number}, ... ],
-  "numerics_version": 1, "tau": number, "tier2_version": 1 }
+  "numerics_version": 2, "tau": number, "tier2_version": 1 }
 ```
 
 Nodes are the reference events (leave-one-out flags) followed by optional

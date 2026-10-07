@@ -124,5 +124,5 @@ and the execution record (backend `cpu`, platform triple, executor from
 `--executor`, wall-clock start and end). The execution record is not part of
 `manifest_hash`, so the same request gives the same hash on every platform.
 The integration test (`crates/vikshep-mcp/tests/stdio.rs`) pins the hash of
-one request and checks the output OIDs against conformance suite v1, with
+one request and checks the output OIDs against conformance suite v2, with
 POSIX shared memory on Linux and macOS and the file store on every platform.

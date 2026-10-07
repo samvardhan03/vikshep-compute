@@ -179,7 +179,7 @@ let graph_json = index.graph(&[])?.to_json()?;                  // nodes, edges,
 ## Conformance
 
 ```sh
-cargo run --release -p vikshep-conformance -- run --backend cpu   # full suite v1, JSON report
+cargo run --release -p vikshep-conformance -- run --backend cpu   # full suite v2, JSON report
 cargo run --release -p vikshep-conformance -- hashes              # C0 determinism sweeps
 cargo run --release -p vikshep-conformance -- generate            # regenerate vectors (CPU reference)
 ```

@@ -18,7 +18,7 @@ int main(void) {
   VkspBackendV1 b = vksp_cpu_backend_v1();
   expect(b.abi_version == VKSP_ABI_VERSION, "ABI version");
   expect(strcmp(b.name(b.ctx), "cpu") == 0, "name");
-  expect(b.numerics_version(b.ctx) == 1, "numerics version");
+  expect(b.numerics_version(b.ctx) == 2, "numerics version");
 
   /* FFT of an impulse is all ones; modulus of (3, -4) is 5. */
   VkspComplex32 d[4] = {{1, 0}, {0, 0}, {0, 0}, {0, 0}};

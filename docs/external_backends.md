@@ -16,7 +16,7 @@ A backend fills a `VkspBackendV1` (`abi_version = VKSP_ABI_VERSION`):
 |---|---|
 | `ctx` | backend-owned context, passed to every call |
 | `name(ctx)` | NUL-terminated name, valid as long as the table (not `cpu`, which is reserved) |
-| `numerics_version(ctx)` | must equal the library's `numerics_version` (1) |
+| `numerics_version(ctx)` | must equal the library's `numerics_version` (2) |
 | `capabilities(ctx)` | largest transform length, parallelism, subnormal handling |
 | `fft`, `ifft`, `mul_real_filter`, `modulus`, `subsample` | the kernels, with the exact arithmetic of VDS-1 sections 6 to 8 and 14.6 |
 | `destroy(ctx)` | releases `ctx` (may be null) |
@@ -88,7 +88,7 @@ the `ScatterBackend` trait.
 ## Proving conformance
 
 A backend conforms when it reproduces the CPU reference bit for bit on
-conformance suite v1 (VDS-1 section 11). After registration:
+conformance suite v2 (VDS-1 section 11). After registration:
 
 ```c
 size_t cases, failed;

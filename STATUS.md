@@ -95,13 +95,14 @@ C3a delivered the Python package `vikshep-compute`, the stable C API
 - [x] Kymatio oracle within the stated tolerance and the exact power-of-two homogeneity test pass unchanged
 - [x] `docs/external_backends.md`: what a backend must do under VDS-1.1 (flush after every operation unless proven identical by the suite; pass 100% of suite v2)
 - [x] CI compares the sweep reports with `vectors/v2/hashes.json`
-- [ ] Flush cost on the CI runners: the `bench` job runs on manual dispatch (Actions, CI, Run workflow); record its results here next to the local measurement below
+- [x] Flush cost on the CI runners measured and recorded under Recorded measurements (2026-10-06): 1.38 on Linux x86_64, 1.23 on Linux AArch64, 2.10 on Windows, 2.62 on macOS (noisy). Higher than the local 1.08 and not yet profiled.
+- [x] `crates/vikshep-capi/c/abi_smoke.c` expects `numerics_version` 2. The C1.1 commit left it at 1, so the `c-abi` job failed on run 37547330000.
 
 ### Gate C1.1
 - [x] numerics_version 2 implemented with software flush-to-zero
 - [x] Locally: suite v2 (402 cases) passes with byte-identical reports on x86_64 Linux (`cpu`, `cpu-serial`, `capi-cpu`), AArch64 Linux (qemu-user) and x86_64 Windows (MinGW build under Wine); all workspace tests, pytest, the C/C++ examples and the MCP integration test pass
-- [ ] Suite v2 identical in CI on Linux x86_64, Linux arm64, macOS arm64, Windows x86_64 (`hash-diff` on the C1.1 PR)
-- [ ] All bindings and the MCP test green in CI
+- [x] Suite v2 identical in CI on Linux x86_64, Linux arm64, macOS arm64 and Windows x86_64: `conformance` passed on all four and `hash-diff` passed in dispatch run 37547330000 (04a1edf)
+- [ ] All bindings and the MCP test green in CI. Run 37547330000 passed the wheels with pytest on four targets and the MCP test on all four test runners. `c-abi` failed on the stale `abi_smoke.c` assert, which is fixed in the next commit; to be confirmed on the PR run
 - [ ] PR open
 
 ## Decisions taken in C1.1
@@ -282,6 +283,29 @@ interval; measured one after the other on an otherwise idle machine):
 
 The fast path removes the result flushes of an FFT stage only when they
 are provably idle; the element-wise kernels always flush.
+
+Flush cost on the GitHub-hosted runners (same benchmark, `bench` job,
+2026-10-06, two `workflow_dispatch` runs started together: run 37547333227
+on `main` at 63cfe6f, before C1.1, and run 37547330000 on this branch at
+04a1edf, C1.1 as committed; criterion mean seconds per batch of 1,000
+events with the interval, 10 samples each):
+
+| Runner (vCPUs) | `main` before C1.1 | C1.1 | Relative |
+|---|---|---|---|
+| `ubuntu-latest`, x86_64 (4) | 17.90 (17.85 to 17.96) | 24.75 (24.71 to 24.81) | 1.38 |
+| `ubuntu-24.04-arm`, AArch64 (4) | 10.21 (10.19 to 10.23) | 12.57 (12.55 to 12.60) | 1.23 |
+| `macos-14`, Apple Silicon (3) | 23.09 (16.76 to 30.89) | 60.50 (42.17 to 80.93) | 2.62 |
+| `windows-latest`, x86_64 (4) | 14.37 (13.80 to 15.05) | 30.24 (29.86 to 30.77) | 2.10 |
+
+On every runner the cost is higher than the 1.08 measured in the cloud
+container above. Treat the macOS row as indicative only: both intervals
+are wide on the shared 3-vCPU runner. The two AArch64 jobs ran on
+different runner image versions (20261004.142.1 on `main`, 20260927.135.1
+on the branch). The other three pairs used the same image. The gap between
+Linux x86_64 and Windows x86_64 points at code generation (the element-wise
+flushes and the per-stage fast-path check) rather than at the arithmetic.
+The cause has not been profiled yet. Conformance does not depend on it:
+the reports are identical on all four platforms.
 
 ## Next
 

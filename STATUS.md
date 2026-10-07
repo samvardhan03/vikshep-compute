@@ -1,8 +1,8 @@
 # Status
 
-Current milestone: **C3a** (Python wheels, C ABI, open MCP data plane,
-provenance schema). Next: **C3b** in `samvardhan03/Vikshep`, and **B1**,
-**B2**, **D1** in the private engine repository.
+Current milestone: **C1.1** (VDS-1.1 flush-to-zero in the CPU reference,
+`numerics_version = 2`, conformance suite v2). Next: **B2-r** in
+`vikshep-compute-pro`, **B1**, **C3b**, **V1-a**.
 
 ## C0 (complete)
 
@@ -56,49 +56,65 @@ deterministic HNSW, graph output contract), parity with the public Python
 metric, 18 Tier-2 conformance cases and VDS-1 sections 15 to 19
 (`tier2_version = 1`).
 
-## C3a checklist
+## C3a (complete)
 
-### A. Python package (`crates/vikshep-py`, PyO3 0.29 + maturin)
-- [x] Distribution `vikshep-compute`, import `vikshep_compute` (extension module `vikshep_compute._core`); the name `vikshep` is not used
-- [x] abi3 wheels for Python 3.10 and later; numpy arrays plus OIDs: `scatter(batch, config) -> (coeffs, oid)`, `r2`, `fingerprint`, `dcorr2_w(x, y, w)`, `train_tag`, `calibrate`, `anomaly_index`, `anomaly_query`, `bench_report`, `provenance_manifest`, `conformance_selftest(subset="quick")`; also `scatter_paths`, `fingerprint_clouds`, `synthetic_dataset`, `oid`, `TaggerModel`, `AnomalyIndex`
-- [x] Inputs converted with numpy and copied element by element into Rust-owned contiguous row-major buffers before compute (VDS-1 section 20.1); tested with Fortran-ordered, strided, big-endian, float64 and list inputs (identical OIDs)
-- [x] pytest: byte equality with `conformance/vectors/v1` for 6 scattering cases (S, r2, log_mean), the 4 training cases (model, scores) and the 2 benchmark reports (report.json, report.md); manifests validated against the schema
-- [x] CI `wheels` job: Linux x86_64 and aarch64 (manylinux_2_28), macOS arm64 and x86_64 (cross-compiled on arm64), Windows x86_64; wheels kept as artifacts, not published; pytest on every target that can run natively
-- [ ] Wheels build and pytest passes on all five targets in CI (first run on the C3a PR)
+Gate met: PR [#3](https://github.com/samvardhan03/vikshep-compute/pull/3)
+merged (commit 63cfe6f). CI run
+[37143077708](https://github.com/samvardhan03/vikshep-compute/actions/runs/37143077708)
+on the PR head passed every job: wheels for Linux x86_64 and aarch64, macOS
+arm64 and x86_64 and Windows x86_64 with pytest on every native target, the C
+and C++ examples on Linux and macOS, the MCP integration test on all four OS
+legs (POSIX shared memory on Linux and macOS, the file store on Windows),
+conformance and `hash-diff`. The first run failed only in `c-abi`: the
+captured native library list carried an ANSI colour escape
+(`-lc<ESC>[0m`); fixed by capturing it with `--color never`.
 
-### B. C ABI (`crates/vikshep-capi`)
-- [x] Stable functions in `include/vikshep.h` (cbindgen): `vksp_scatter`, `vksp_r2`, `vksp_fingerprint`, `vksp_provenance_manifest`, `vksp_conformance_selftest`, `vksp_version_info`, plus `vksp_config_1d/2d`, `vksp_scatter_info`, `vksp_oid`, `vksp_last_error`, `vksp_status_string`
-- [x] Status codes, no panics across the boundary (`catch_unwind` on every export, including the CPU kernel table), caller-allocated output buffers with size queries
-- [x] `examples/c/vikshep_example.c` and `examples/cpp/vikshep_example.cpp`, compiled with `-Werror -pedantic` and run in CI (`c-abi` job, Linux and macOS)
-- [x] `vksp_register_backend` / `vksp_unregister_backend` in `include/vikshep_backend.h`: a host is handed an external `VkspBackendV1` and uses it by name in every host function, including the conformance self-test; `docs/external_backends.md` documents how a proprietary CUDA or Metal backend plugs in without this repository containing it
-- [ ] C and C++ examples build and run in CI (first run on the C3a PR)
+C3a delivered the Python package `vikshep-compute`, the stable C API
+(`include/vikshep.h`) with external backend registration, the MCP data plane
+`vikshep-mcp`, and `spec/provenance.schema.json`.
 
-### C. MCP data plane (`crates/vikshep-mcp`)
-- [x] JSON-RPC 2.0 over stdio, line-delimited; MCP handshake (`initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`); tools `compute_scattering`, `reduce`, `compare`, `detect_anomaly` with the contract's input field names
-- [x] Inputs by OID from POSIX shared memory (name `/<oid>`); outputs written to new segments named by their OIDs; responses carry OIDs and small JSON summaries; every segment read is checked against its OID
-- [x] Windows: file-backed store, one file per OID in `<temp dir>/vikshep-shm` (or `$VIKSHEP_SHM_DIR`), documented in `docs/mcp.md`; selectable on every platform with `--store file`
-- [x] Integration test (`tests/stdio.rs`): spawns the binary, writes a conformance input tensor, and checks that the output OIDs of `compute_scattering` and `reduce` equal the conformance vectors (1-D zero-padded and 2-D `so2_relative` cases), plus `compare`, `detect_anomaly`, errors and segment cleanup; default store (shared memory on Linux and macOS, files on Windows) and file store
-- [x] Every tool result includes `numerics_version`, `tier2_version` and the provenance `manifest_hash` (pinned in the test, platform independent)
-- [ ] MCP integration test passes in CI on Linux and macOS (shared memory) and Windows (file store) (first run on the C3a PR)
+## C1.1 checklist (VDS-1.1 flush-to-zero)
 
-### D. Provenance manifest
-- [x] `spec/provenance.schema.json` (JSON Schema 2020-12): inputs (OID, dtype, shape), config, filter-bank SHA3, `numerics_version`, `tier2_version`, seeds, outputs, execution (backend name and version, platform triple, executor `local|cloud`, wall clock) and `manifest_hash`
-- [x] Hashed subset specified (VDS-1 section 9.3): everything except `execution` and `manifest_hash`, so wall-clock times, backend, platform and executor never change the hash
-- [x] One implementation (`vikshep_numerics::provenance`) behind the Rust, C, Python and MCP manifests
+### Spec
+- [x] VDS-1 section 8.1 states the VDS-1.1 rules precisely: the flush definition; host flushing of every Tier-1 input tensor and every host-built table (filters, twiddles) before any kernel; flushing of the operands and the rounded result of every `+`, `-`, `*`, `sqrt` in every kernel; tininess judged after rounding, with the note that a before-rounding backend differs only for results rounding to exactly FLT_MIN and that `round_to_flt_min` cases catch it; sign of zero preserved; Tier 2 (binary64, CPU only) unchanged; `numerics_version = 2`, vectors v2
+- [x] Sections 2.4, 4.4, 5.6, 6.2, 6.5, 11.2, 11.3, 12.2, 14.3.4, 14.6.1 and 20.3 updated; permitted omission of provably idle flushes documented with the proof of the CPU fast path
 
-### E. Docs and status
-- [x] README quickstart for Python and C/C++ (and the MCP binary); VDS-1 section 20 (bindings and data plane), sections 9.3, 11.2, 11.3, 14.9, 14.10 updated; `docs/mcp.md`, `docs/external_backends.md`
-- [x] Nothing tagged, nothing published
-- [x] STATUS updated
+### Implementation
+- [x] `vikshep_numerics::flush::ftz` (explicit, portable software flush; no MXCSR or FPCR flags), bit-identical to the spec's reference definition over a sweep of binary32 patterns
+- [x] FFT (`vikshep_numerics::fft`): input and twiddles flushed on load, every butterfly sum, difference and product and the `2^-m` scaling flushed; binary64 host transforms unchanged
+- [x] CPU kernels: `mul_real_filter` and `modulus` (both squares, the sum and the root) flush operands and results; `subsample` copies; `capabilities().preserves_subnormals` is now false
+- [x] Host: the scattering driver flushes input samples at canvas embedding; filters are flushed at table construction; the conformance runner flushes every kernel input and filter before calling the backend
+- [x] `numerics_version = 2`; `conformance/vectors/v1/` kept for history, `conformance/vectors/v2/` generated with the CPU reference
 
-### Gate C3a
-- [x] Locally: wheel builds (Linux x86_64) and pytest passes (21 tests, Python 3.10 and 3.11); C and C++ examples build and run (Linux); MCP integration test passes with POSIX shared memory and the file store (Linux) and with the file store under Wine (Windows build)
-- [ ] Wheels build for all five targets in CI
-- [ ] pytest byte equality with the conformance vectors passes in CI
-- [ ] C and C++ examples build and run in CI
-- [ ] MCP integration test passes on Linux and macOS, file-backed fallback passes on Windows, in CI
-- [x] Provenance schema committed
+### Suite v2
+- [x] 402 cases: the 313 Tier-1 and sweep cases of v1, 71 VDS-1.1 adversarial cases, 18 Tier-2 cases. New input kinds (VDS-1 section 11.2), each documented in `conformance/cases.toml` and the spec: `subnormal` (FFT, modulus, filter, 1-D and 2-D scattering), `flt_min_band` (sums and differences below, at and above FLT_MIN; FFT, modulus, scattering), `sqrt_flt_min_band` (squares below, at and above FLT_MIN; modulus), `round_to_flt_min` (products rounding up to exactly FLT_MIN; filter), `long_tail` (filter decaying to `2^-149`), `signed_zero` (filter products flushing to both signed zeros)
+- [x] Against v1, only the `near_subnormal` cases and the JSON outputs that embed `numerics_version` changed; every other v1 output is byte-identical in v2; no stored kernel output contains a subnormal (242,828 values checked); the `round_to_flt_min` outputs hold exact FLT_MIN values and the `signed_zero` outputs both zero signs
+
+### Bindings, tests, docs
+- [x] Python byte-equality tests read `vectors/v2` (24 tests, three new flush-to-zero scattering cases); the C ABI and Python self-tests embed v2 (quick subset 256 cases); the MCP integration test checks `numerics_version` 2 and its pinned manifest hash was updated (`6ff71ab4...`)
+- [x] Kymatio oracle within the stated tolerance and the exact power-of-two homogeneity test pass unchanged
+- [x] `docs/external_backends.md`: what a backend must do under VDS-1.1 (flush after every operation unless proven identical by the suite; pass 100% of suite v2)
+- [x] CI compares the sweep reports with `vectors/v2/hashes.json`
+- [x] Flush cost on the CI runners measured and recorded under Recorded measurements (2026-10-06): 1.38 on Linux x86_64, 1.23 on Linux AArch64, 2.10 on Windows, 2.62 on macOS (noisy). Higher than the local 1.08 and not yet profiled.
+- [x] `crates/vikshep-capi/c/abi_smoke.c` expects `numerics_version` 2. The C1.1 commit left it at 1, so the `c-abi` job failed on run 37547330000.
+
+### Gate C1.1
+- [x] numerics_version 2 implemented with software flush-to-zero
+- [x] Locally: suite v2 (402 cases) passes with byte-identical reports on x86_64 Linux (`cpu`, `cpu-serial`, `capi-cpu`), AArch64 Linux (qemu-user) and x86_64 Windows (MinGW build under Wine); all workspace tests, pytest, the C/C++ examples and the MCP integration test pass
+- [x] Suite v2 identical in CI on Linux x86_64, Linux arm64, macOS arm64 and Windows x86_64: `conformance` passed on all four and `hash-diff` passed in dispatch run 37547330000 (04a1edf)
+- [ ] All bindings and the MCP test green in CI. Run 37547330000 passed the wheels with pytest on four targets and the MCP test on all four test runners. `c-abi` failed on the stale `abi_smoke.c` assert, which is fixed in the next commit; to be confirmed on the PR run
 - [ ] PR open
+
+## Decisions taken in C1.1
+
+| Decision | Outcome |
+|---|---|
+| Flush primitive | exponent-field test with a branch-free mask; equals `if |x| < FLT_MIN { copysign(0, x) } else { x }` for every binary32 value |
+| Where flushes happen | host: inputs and tables once; kernels: operands when loaded and every rounded result |
+| Tininess | after rounding (the only observable value); `round_to_flt_min` cases pin it |
+| Tier 2 | unchanged (binary64, no flush), including pooling and r2, which round once from binary64 on the host |
+| CPU fast path | an FFT stage skips its result flushes when every nonzero operand is at least `2^-69` and every nonzero twiddle component at least `2^-10` (proof in VDS-1 section 8.1); bit-identical to flushing everything, tested, and suite v2 was generated with the unoptimized form |
+| Vectors | `v2/` new; `v1/` kept unchanged for history |
 
 ## Contract notes (`contract/mcpSchemas.ts`, public Vikshep commit 7882dfc)
 
@@ -172,12 +188,9 @@ Python module can run the self-test.
 | JSON numbers | ECMAScript `Number::toString` (shortest round trip, ties to even); seeds as decimal strings; Markdown fixed six decimals |
 | Philox streams | registry in VDS-1 section 15.4 |
 
-Open decisions (VDS-1 section 13): D-FTZ is closed as flush-to-zero by the
-VDS-1.1 text merged in PR #4 (section 8.1), which requires CPU emulation of
-flushing, `numerics_version` 2 and regenerated vectors; that implementation
-is not done yet, so the code and the conformance vectors are still the
-subnormal-preserving `numerics_version` 1. D-SQRT is closed for Metal and
-open for CUDA; D-STEER is open.
+Open decisions (VDS-1 section 13): D-FTZ is closed as flush-to-zero
+(VDS-1.1, implemented in C1.1: `numerics_version` 2, suite v2). D-SQRT is
+closed for Metal and open for CUDA; D-STEER is open.
 
 ## Recorded measurements
 
@@ -203,15 +216,18 @@ C3a local checks (Linux x86_64 container unless stated):
 | MCP integration test, Windows build (`x86_64-pc-windows-gnu`) under Wine | 3 / 3 passed with the default file store; same pinned manifest hash |
 | Python `SharedMemory(name=oid)` producer with `vikshep-mcp` | output OID equals `vikshep_compute.scatter` |
 
-Cross-platform conformance (suite v1, 331 cases), reports byte-identical:
+Cross-platform conformance (suite v2, 402 cases, `numerics_version` 2),
+reports byte-identical:
 
 | Platform | How | Result |
 |---|---|---|
-| x86_64 Linux | native; backends `cpu`, `cpu-serial`, `capi-cpu` | 331 / 331 pass, identical |
-| AArch64 Linux | cross-compiled, qemu-user | 331 / 331 pass, identical |
-| x86_64 Windows (`x86_64-pc-windows-gnu`) | MinGW build under Wine | 331 / 331 pass, identical |
+| x86_64 Linux | native; backends `cpu`, `cpu-serial`, `capi-cpu` | 402 / 402 pass, identical |
+| AArch64 Linux | cross-compiled, qemu-user | 402 / 402 pass, identical |
+| x86_64 Windows (`x86_64-pc-windows-gnu`) | MinGW build under Wine | 402 / 402 pass, identical |
 
-Local report SHA-256: `046ed735aa4faf29d8f36425f82c8f94abaec864e465cd333d661fb14a7f1e9f` (equal on all three platforms).
+Local report SHA-256: `b142e88f450a5999d2ace979e65720bf0a435e4ecfbce7de95cea096f7d74de3`
+(equal on all three platforms). Suite v1 (331 cases, `numerics_version` 1)
+results are in the history of this file.
 
 Python parity (VDS-1 section 12.4):
 
@@ -255,7 +271,46 @@ batch of 1,000 events, CPU reference):
 |---|---|---|
 | cloud container, 4 vCPU Intel Xeon @ 2.10 GHz, Linux x86_64 | 2026-10-02 | 48.6 (criterion interval 47.9 to 49.3) |
 
+Cost of the VDS-1.1 software flush (same benchmark, same container type,
+2026-10-06, criterion, mean seconds per batch of 1,000 events with the
+interval; measured one after the other on an otherwise idle machine):
+
+| Build | Seconds per 1,000 events | Events per second | Relative |
+|---|---|---|---|
+| `main` before C1.1 (`numerics_version` 1, no flush) | 19.62 (19.23 to 20.03) | 51.0 | 1.00 |
+| flush after every operation, no fast path | 50.79 (50.31 to 51.24) | 19.7 | 2.59 |
+| C1.1 as committed (flush with the proven FFT fast path) | 21.14 (20.90 to 21.38) | 47.3 | 1.08 |
+
+The fast path removes the result flushes of an FFT stage only when they
+are provably idle; the element-wise kernels always flush.
+
+Flush cost on the GitHub-hosted runners (same benchmark, `bench` job,
+2026-10-06, two `workflow_dispatch` runs started together: run 37547333227
+on `main` at 63cfe6f, before C1.1, and run 37547330000 on this branch at
+04a1edf, C1.1 as committed; criterion mean seconds per batch of 1,000
+events with the interval, 10 samples each):
+
+| Runner (vCPUs) | `main` before C1.1 | C1.1 | Relative |
+|---|---|---|---|
+| `ubuntu-latest`, x86_64 (4) | 17.90 (17.85 to 17.96) | 24.75 (24.71 to 24.81) | 1.38 |
+| `ubuntu-24.04-arm`, AArch64 (4) | 10.21 (10.19 to 10.23) | 12.57 (12.55 to 12.60) | 1.23 |
+| `macos-14`, Apple Silicon (3) | 23.09 (16.76 to 30.89) | 60.50 (42.17 to 80.93) | 2.62 |
+| `windows-latest`, x86_64 (4) | 14.37 (13.80 to 15.05) | 30.24 (29.86 to 30.77) | 2.10 |
+
+On every runner the cost is higher than the 1.08 measured in the cloud
+container above. Treat the macOS row as indicative only: both intervals
+are wide on the shared 3-vCPU runner. The two AArch64 jobs ran on
+different runner image versions (20261004.142.1 on `main`, 20260927.135.1
+on the branch). The other three pairs used the same image. The gap between
+Linux x86_64 and Windows x86_64 points at code generation (the element-wise
+flushes and the per-stage fast-path check) rather than at the arithmetic.
+The cause has not been profiled yet. Conformance does not depend on it:
+the reports are identical on all four platforms.
+
 ## Next
 
+* **B2-r** in `vikshep-compute-pro`: re-run the Metal backend against suite
+  v2 (`numerics_version` 2).
+* **B1**: the CUDA backend against suite v2.
 * **C3b** in `samvardhan03/Vikshep`: per the C3b prompt.
-* **B1**, **B2**, **D1** in the private engine repository: per their prompts.
+* **V1-a**: per its prompt.

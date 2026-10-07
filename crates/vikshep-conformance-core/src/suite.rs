@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use vikshep_backend_api::{BackendError, Canvas, Complex32, ScatterBackend, Twiddles};
 use vikshep_numerics::NUMERICS_VERSION;
 use vikshep_numerics::fft::Real;
+use vikshep_numerics::flush::{ftz, ftz_slice};
 use vikshep_numerics::oid::{hex, sha3_256};
 use vikshep_numerics::rng::Stream;
 use vikshep_scatter::reduce::{log_mean, log_mean_bytes, r2};
@@ -20,10 +21,10 @@ pub const CASES_TOML: &str = include_str!("../../../conformance/cases.toml");
 
 /// `expected.json` of suite v1, compiled in (for self-tests without the
 /// repository checkout: `vikshep-capi`, `vikshep-py`).
-pub const EXPECTED_JSON: &str = include_str!("../../../conformance/vectors/v1/expected.json");
+pub const EXPECTED_JSON: &str = include_str!("../../../conformance/vectors/v2/expected.json");
 
 /// `expected.bin` of suite v1, compiled in.
-pub const EXPECTED_BIN: &[u8] = include_bytes!("../../../conformance/vectors/v1/expected.bin");
+pub const EXPECTED_BIN: &[u8] = include_bytes!("../../../conformance/vectors/v2/expected.bin");
 
 /// Case-id prefixes of the `quick` self-test subset: FFTs, the element-wise
 /// kernels, 1-D and 2-D scattering, and the fast Tier-2 cases.
@@ -47,7 +48,7 @@ pub const QUICK_SUBSET: &[&str] = &[
 /// Default directory of the expected vectors.
 #[must_use]
 pub fn default_vectors_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../conformance/vectors/v1")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../conformance/vectors/v2")
 }
 
 // ---------------------------------------------------------------------------
@@ -132,6 +133,33 @@ pub enum InputKind {
     NearSubnormal,
     /// `(2u - 1) * 2^40`: large magnitudes that cannot overflow.
     Large,
+    /// VDS-1.1 adversarial: binary32 subnormals (and signed zeros) with
+    /// random mantissa and sign, `bits = r & 0x807fffff`; the host flushes
+    /// every one to signed zero, so the case checks that subnormal inputs
+    /// are treated as zeros of the same sign.
+    Subnormal,
+    /// VDS-1.1 adversarial: `+/-(2^-126 + k 2^-149)`, `k = r & 63`, sign from
+    /// bit 31 of `r`: normal values just above FLT_MIN whose butterfly sums
+    /// and differences land below (subnormal, flushed), exactly at and above
+    /// FLT_MIN.
+    FltMinBand,
+    /// VDS-1.1 adversarial: `+/-2^-63 (1 + k 2^-23)`, `k = (r & 7) - 3`:
+    /// squares (modulus) just below, exactly at (`k = 0`) and above FLT_MIN.
+    SqrtFltMinBand,
+    /// VDS-1.1 adversarial (filter multiplication): data `+/-(2^-126 + k
+    /// 2^-149)`, `k = r & 3`, times the filter `1 - 2^-24`: the products
+    /// round up to exactly FLT_MIN or stay just above it; tininess is judged
+    /// after rounding, so none is flushed (a backend judging tininess before
+    /// rounding would flush the `k = 0` products and fail this case).
+    RoundToFltMin,
+    /// VDS-1.1 adversarial (filter multiplication): data `2u - 1`, filter
+    /// with a long tail `2^-(i mod 150)` down to `2^-149`; its subnormal
+    /// entries are flushed on the host before the kernel runs.
+    LongTail,
+    /// VDS-1.1 adversarial (filter multiplication): data `(2u - 1) 2^-100`
+    /// times the filter `2^-30`: every product is subnormal and flushes to
+    /// the zero of its own sign.
+    SignedZero,
 }
 
 impl InputKind {
@@ -144,6 +172,12 @@ impl InputKind {
             "alternating" => Self::Alternating,
             "near_subnormal" => Self::NearSubnormal,
             "large" => Self::Large,
+            "subnormal" => Self::Subnormal,
+            "flt_min_band" => Self::FltMinBand,
+            "sqrt_flt_min_band" => Self::SqrtFltMinBand,
+            "round_to_flt_min" => Self::RoundToFltMin,
+            "long_tail" => Self::LongTail,
+            "signed_zero" => Self::SignedZero,
             other => panic!("cases.toml: unknown input kind {other:?}"),
         }
     }
@@ -159,6 +193,64 @@ impl InputKind {
             Self::Alternating => "alternating",
             Self::NearSubnormal => "near_subnormal",
             Self::Large => "large",
+            Self::Subnormal => "subnormal",
+            Self::FltMinBand => "flt_min_band",
+            Self::SqrtFltMinBand => "sqrt_flt_min_band",
+            Self::RoundToFltMin => "round_to_flt_min",
+            Self::LongTail => "long_tail",
+            Self::SignedZero => "signed_zero",
+        }
+    }
+
+    /// True for the VDS-1.1 adversarial families sampled by
+    /// [`Self::pattern_sample`].
+    const fn is_pattern(self) -> bool {
+        matches!(
+            self,
+            Self::Subnormal
+                | Self::FltMinBand
+                | Self::SqrtFltMinBand
+                | Self::RoundToFltMin
+                | Self::LongTail
+                | Self::SignedZero
+        )
+    }
+
+    /// One sample of the VDS-1.1 adversarial families.
+    fn pattern_sample(self, s: &mut Stream) -> Option<f32> {
+        let sign = |r: u32| r & 0x8000_0000;
+        Some(match self {
+            Self::Subnormal => {
+                let r = s.next_u32();
+                f32::from_bits(r & 0x807f_ffff)
+            }
+            Self::FltMinBand => {
+                let r = s.next_u32();
+                f32::from_bits(sign(r) | (0x0080_0000 + (r & 63)))
+            }
+            Self::SqrtFltMinBand => {
+                let r = s.next_u32();
+                f32::from_bits(sign(r) | (0x2000_0000 + (r & 7)).wrapping_sub(3))
+            }
+            Self::RoundToFltMin => {
+                let r = s.next_u32();
+                f32::from_bits(sign(r) | (0x0080_0000 + (r & 3)))
+            }
+            Self::SignedZero => (2.0 * s.next_f32_unit() - 1.0) * pow2_f32(-100),
+            Self::LongTail => 2.0 * s.next_f32_unit() - 1.0,
+            _ => return None,
+        })
+    }
+
+    /// The filter of a `mul_real_filter` case with this input (VDS-1
+    /// section 11.2); `None`: one `next_f32_unit` per element, drawn after
+    /// the input.
+    fn filter(self, len: usize) -> Option<Vec<f32>> {
+        match self {
+            Self::RoundToFltMin => Some(vec![f32::from_bits(0x3f7f_ffff); len]),
+            Self::SignedZero => Some(vec![pow2_f32(-30); len]),
+            Self::LongTail => Some((0..len).map(|i| pow2_f32(-((i % 150) as i32))).collect()),
+            _ => None,
         }
     }
 
@@ -172,11 +264,13 @@ impl InputKind {
     }
 }
 
+/// Exact `2^e` for `-149 <= e <= 127` (subnormal below `-126`), built from
+/// bits so that no arithmetic is involved.
 fn pow2_f32(e: i32) -> f32 {
     if e >= -126 {
         f32::pow2(e)
     } else {
-        f32::pow2(-126) * f32::pow2(e + 126)
+        f32::from_bits(1u32 << (e + 149))
     }
 }
 
@@ -185,6 +279,11 @@ fn pow2_f32(e: i32) -> f32 {
 #[must_use]
 pub fn real_input(kind: InputKind, rows: usize, cols: usize, s: &mut Stream) -> Vec<f32> {
     let n = rows * cols;
+    if kind.is_pattern() {
+        return (0..n)
+            .map(|_| kind.pattern_sample(s).expect("pattern kind"))
+            .collect();
+    }
     if let Some(e) = kind.random_scale_log2() {
         let scale = pow2_f32(e);
         return (0..n)
@@ -219,6 +318,15 @@ pub fn real_input(kind: InputKind, rows: usize, cols: usize, s: &mut Stream) -> 
 /// kinds put the real pattern in `re` and `+0` in `im`.
 #[must_use]
 pub fn complex_input(kind: InputKind, rows: usize, cols: usize, s: &mut Stream) -> Vec<Complex32> {
+    if kind.is_pattern() {
+        return (0..rows * cols)
+            .map(|_| {
+                let re = kind.pattern_sample(s).expect("pattern kind");
+                let im = kind.pattern_sample(s).expect("pattern kind");
+                Complex32::new(re, im)
+            })
+            .collect();
+    }
     if let Some(e) = kind.random_scale_log2() {
         let scale = pow2_f32(e);
         return (0..rows * cols)
@@ -524,6 +632,16 @@ fn tables(canvas: Canvas, inverse: bool) -> (Vec<Complex32>, Vec<Complex32>) {
     (t(canvas.cols), t(canvas.rows))
 }
 
+/// Host-side flush of a kernel input (VDS-1.1 section 8.1): every binary32
+/// subnormal becomes the zero of the same sign before any kernel runs.
+fn flushed(mut d: Vec<Complex32>) -> Vec<Complex32> {
+    for v in &mut d {
+        v.re = ftz(v.re);
+        v.im = ftz(v.im);
+    }
+    d
+}
+
 /// Runs cases, sharing trivial-group scattering results between groups.
 pub struct Runner<'a> {
     backend: &'a dyn ScatterBackend,
@@ -558,7 +676,7 @@ impl<'a> Runner<'a> {
                 inverse,
                 input,
             } => {
-                let mut d = complex_input(*input, canvas.rows, canvas.cols, &mut s);
+                let mut d = flushed(complex_input(*input, canvas.rows, canvas.cols, &mut s));
                 let (tc, tr) = tables(*canvas, *inverse);
                 let tw = Twiddles {
                     cols: &tc,
@@ -572,13 +690,16 @@ impl<'a> Runner<'a> {
                 vec![one("out", Dtype::C32, c32_bytes(&d))]
             }
             CaseKind::Modulus { n, input } => {
-                let mut d = complex_input(*input, 1, *n, &mut s);
+                let mut d = flushed(complex_input(*input, 1, *n, &mut s));
                 b.modulus(&mut d)?;
                 vec![one("out", Dtype::C32, c32_bytes(&d))]
             }
             CaseKind::MulRealFilter { canvas, input } => {
-                let mut d = complex_input(*input, canvas.rows, canvas.cols, &mut s);
-                let h: Vec<f32> = (0..canvas.len()).map(|_| s.next_f32_unit()).collect();
+                let mut d = flushed(complex_input(*input, canvas.rows, canvas.cols, &mut s));
+                let mut h: Vec<f32> = input
+                    .filter(canvas.len())
+                    .unwrap_or_else(|| (0..canvas.len()).map(|_| s.next_f32_unit()).collect());
+                ftz_slice(&mut h);
                 b.mul_real_filter(&mut d, *canvas, &h, &[0])?;
                 vec![one("out", Dtype::C32, c32_bytes(&d))]
             }

@@ -11,6 +11,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use serde_json::{Value as Json, json};
 use vikshep_conformance_core::suite::{embedded_expected_output, scatter_case};
 use vikshep_mcp::store::{FileStore, TensorStore, default_store};
+use vikshep_numerics::NUMERICS_VERSION;
 use vikshep_numerics::oid::oid;
 
 struct Client {
@@ -65,7 +66,7 @@ impl Client {
         let text = r["content"][0]["text"].as_str().unwrap().to_string();
         assert_eq!(r["isError"], false, "{name}: {text}");
         let s: Json = serde_json::from_str(&text).unwrap();
-        assert_eq!(s["numerics_version"], 1, "{name}");
+        assert_eq!(s["numerics_version"], NUMERICS_VERSION, "{name}");
         assert_eq!(s["manifest_hash"].as_str().unwrap().len(), 64, "{name}");
         assert_eq!(r["structuredContent"], s, "{name}");
         s
@@ -87,7 +88,10 @@ impl Client {
         );
         assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
         assert_eq!(init["result"]["serverInfo"]["name"], "vikshep-mcp");
-        assert_eq!(init["result"]["_meta"]["numerics_version"], 1);
+        assert_eq!(
+            init["result"]["_meta"]["numerics_version"],
+            NUMERICS_VERSION
+        );
         self.send(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
         let tools = self.request("tools/list", json!({}));
         let names: Vec<&str> = tools["result"]["tools"]
@@ -118,7 +122,7 @@ fn expected_oid(case: &str, output: &str) -> String {
 }
 
 /// Manifest hash of the 1-D case below, pinned: equal on every platform.
-const MANIFEST_HASH_1D: &str = "d8aa1d31e7ecb9837cc2f89f041c149b1fafe0d0c19953ae0d4ecaf9d147a307";
+const MANIFEST_HASH_1D: &str = "6ff71ab48d632625384a0f74aaa30f965fe3f06c444ea3e4ff9d4f2623a061cf";
 
 fn exercise(client: &mut Client, store: &mut dyn TensorStore) {
     client.handshake();

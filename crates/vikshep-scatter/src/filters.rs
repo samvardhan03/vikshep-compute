@@ -343,13 +343,21 @@ fn to_fourier_real(mut z: Vec<Complex64>, rows: usize, cols: usize) -> (Vec<f64>
     (z.into_iter().map(|v| v.re).collect(), max_im / max_re)
 }
 
-/// Truncate below `2^-40 * max|h|` and round once to binary32.
+/// Truncate below `2^-40 * max|h|`, round once to binary32 and flush a
+/// subnormal result to signed zero (VDS-1.1 section 8.1; no supported
+/// filter has one, the truncation keeps values far above `2^-126`).
 #[must_use]
 pub fn truncate_and_round(h: &[f64]) -> Vec<f32> {
     let peak = h.iter().fold(0.0f64, |m, v| m.max(v.abs()));
     let threshold = peak * pow2_real(f64::from(TRUNCATION_LOG2));
     h.iter()
-        .map(|&v| if v.abs() < threshold { 0.0 } else { v as f32 })
+        .map(|&v| {
+            if v.abs() < threshold {
+                0.0
+            } else {
+                vikshep_numerics::flush::ftz(v as f32)
+            }
+        })
         .collect()
 }
 

@@ -14,6 +14,14 @@
 //! with one rounding per operation and no fusion. The result always ends in
 //! the input buffer (for odd `m` the final step copies it from scratch).
 //!
+//! VDS-1.1 (section 8.1): in binary32 every operand is flushed to zero if
+//! subnormal before use, and every individual result (sum, difference,
+//! product) is flushed after rounding ([`Real::flush`]); in binary64 (host,
+//! Tier 2) `flush` is the identity. The input of a transform and the twiddle
+//! tables are flushed once on entry; every later operand is the flushed
+//! result of an earlier operation, so flushing it again would be the
+//! identity and is not repeated.
+//!
 //! Binary32 ([`Complex32`]) is the Tier-1 precision. The same code runs in
 //! binary64 ([`Complex64`]) for host-side (Tier-2) filter construction.
 
@@ -81,6 +89,12 @@ pub trait Real:
     fn twiddles(m: u32) -> &'static [Complex<Self>];
     /// Cached conjugate (inverse) twiddle table for `N = 2^m`.
     fn twiddles_inverse(m: u32) -> &'static [Complex<Self>];
+    /// VDS-1.1 flush-to-zero: binary32 subnormals become the zero of the
+    /// same sign ([`crate::flush::ftz`]); the identity for binary64.
+    fn flush(self) -> Self;
+    /// True if `self` is nonzero with magnitude below `2^e` (binary32);
+    /// always false for binary64, which never flushes.
+    fn nonzero_below_pow2(self, e: i32) -> bool;
 }
 
 const TABLES: usize = MAX_LOG2_LEN as usize + 1;
@@ -116,6 +130,15 @@ impl Real for f32 {
         check_log2(m);
         TW32_INV[m as usize].get_or_init(|| conjugate(Self::twiddles(m)))
     }
+    #[inline(always)]
+    fn flush(self) -> Self {
+        crate::flush::ftz(self)
+    }
+    #[inline(always)]
+    fn nonzero_below_pow2(self, e: i32) -> bool {
+        let mag = self.to_bits() & 0x7fff_ffff;
+        mag != 0 && mag < (((e + 127) as u32) << 23)
+    }
 }
 
 impl Real for f64 {
@@ -137,6 +160,14 @@ impl Real for f64 {
         check_log2(m);
         TW64_INV[m as usize].get_or_init(|| conjugate(Self::twiddles(m)))
     }
+    #[inline(always)]
+    fn flush(self) -> Self {
+        self
+    }
+    #[inline(always)]
+    fn nonzero_below_pow2(self, _e: i32) -> bool {
+        false
+    }
 }
 
 fn conjugate<T: Real>(tw: &[Complex<T>]) -> Vec<Complex<T>> {
@@ -145,7 +176,8 @@ fn conjugate<T: Real>(tw: &[Complex<T>]) -> Vec<Complex<T>> {
 
 /// Build `TW_N[p]`, `p in 0..N/2`, by the first-octant construction of
 /// VDS-1 section 7 (binary64 evaluation with `vikshep-detmath`, one rounding
-/// to `T`, exact symmetry for the rest of the half circle).
+/// to `T`, exact symmetry for the rest of the half circle). Entries are
+/// flushed ([`Real::flush`]); no supported table has a subnormal entry.
 #[must_use]
 pub fn build_twiddles<T: Real>(m: u32) -> Vec<Complex<T>> {
     check_log2(m);
@@ -158,8 +190,8 @@ pub fn build_twiddles<T: Real>(m: u32) -> Vec<Complex<T>> {
     let mut s = vec![T::from_f64(0.0); q4 + 1];
     for k in 0..=q8 {
         let theta = k as f64 * step;
-        c[k] = T::from_f64(vikshep_detmath::cos(theta));
-        s[k] = T::from_f64(vikshep_detmath::sin(theta));
+        c[k] = T::from_f64(vikshep_detmath::cos(theta)).flush();
+        s[k] = T::from_f64(vikshep_detmath::sin(theta)).flush();
     }
     if n >= 8 {
         c[q8] = T::sqrt_half();
@@ -189,13 +221,37 @@ pub fn log2_len(n: usize) -> u32 {
     m
 }
 
+/// Operands of a stage with no nonzero magnitude below `2^FAST_INPUT_LOG2`,
+/// combined with twiddles with no nonzero component below
+/// `2^FAST_TWIDDLE_LOG2`, provably produce no subnormal result in that
+/// stage, so every VDS-1.1 flush in it is the identity and the stage may run
+/// without them, with identical bits. Proof, for binary32: a sum or
+/// difference of two operands that are each zero or at least `2^-69` in
+/// magnitude is exactly a multiple of an ulp of at least `2^-92`, hence zero
+/// or at least `2^-92` after rounding; a product of such a value with a
+/// twiddle component (zero or at least `2^-10`) is zero or at least `2^-102`;
+/// the final sum or difference of two such products is a multiple of an ulp
+/// of at least `2^-125`, hence zero or at least `2^-125`, above
+/// `2^-126`. Every table of [`Real::twiddles`] for `N <= 4096` satisfies the
+/// twiddle bound (its smallest nonzero component is `sin(2 pi / 4096)`, about
+/// `2^-9.35`).
+const FAST_INPUT_LOG2: i32 = -69;
+/// See [`FAST_INPUT_LOG2`].
+const FAST_TWIDDLE_LOG2: i32 = -10;
+
+#[inline(always)]
+fn fl<T: Real, const FLUSH: bool>(x: T) -> T {
+    if FLUSH { x.flush() } else { x }
+}
+
 /// One level of the recursion: `fft0(n, s, _, src, dst)` without the tail call.
 ///
 /// Iterates over contiguous blocks of `s` elements (slices instead of index
 /// arithmetic, so the compiler can drop bounds checks); the arithmetic of
-/// each output element is exactly the butterfly of VDS-1 section 6.2.
+/// each output element is exactly the butterfly of VDS-1 section 6.2, with
+/// every result flushed when `FLUSH` (VDS-1.1).
 #[inline]
-fn stage<T: Real>(
+fn stage<T: Real, const FLUSH: bool>(
     src: &[Complex<T>],
     dst: &mut [Complex<T>],
     n: usize,
@@ -209,31 +265,75 @@ fn stage<T: Real>(
     let blocks = src_a.chunks_exact(s).zip(src_b.chunks_exact(s));
     for (p, (y, (a_blk, b_blk))) in pairs.zip(blocks).enumerate() {
         let w = tw[p * tw_stride];
+        let w = Complex::new(w.re.flush(), w.im.flush());
         let (y0, y1) = y.split_at_mut(s);
         for (((y0, y1), a), b) in y0.iter_mut().zip(y1.iter_mut()).zip(a_blk).zip(b_blk) {
-            *y0 = Complex::new(a.re + b.re, a.im + b.im);
-            let d_re = a.re - b.re;
-            let d_im = a.im - b.im;
-            *y1 = Complex::new(d_re * w.re - d_im * w.im, d_re * w.im + d_im * w.re);
+            *y0 = Complex::new(fl::<T, FLUSH>(a.re + b.re), fl::<T, FLUSH>(a.im + b.im));
+            let d_re = fl::<T, FLUSH>(a.re - b.re);
+            let d_im = fl::<T, FLUSH>(a.im - b.im);
+            let re = fl::<T, FLUSH>(fl::<T, FLUSH>(d_re * w.re) - fl::<T, FLUSH>(d_im * w.im));
+            let im = fl::<T, FLUSH>(fl::<T, FLUSH>(d_re * w.im) + fl::<T, FLUSH>(d_im * w.re));
+            *y1 = Complex::new(re, im);
         }
     }
+}
+
+/// True if a stage over `src` might produce a subnormal (see
+/// [`FAST_INPUT_LOG2`]).
+fn stage_needs_flush<T: Real>(src: &[Complex<T>]) -> bool {
+    src.iter().fold(false, |acc, v| {
+        acc | v.re.nonzero_below_pow2(FAST_INPUT_LOG2) | v.im.nonzero_below_pow2(FAST_INPUT_LOG2)
+    })
 }
 
 /// The normative recursion of VDS-1 section 6.2 with table `tw` (forward or
 /// conjugate). `x.len()` must equal `2 * tw.len()`; `scratch` must be at
 /// least as long as `x`. The result is left in `x`; no scaling is applied.
+/// The input is flushed on entry and each twiddle when it is loaded; a
+/// stage runs without its (then provably idle) result flushes when the
+/// bounds of [`FAST_INPUT_LOG2`] hold.
 pub fn stockham<T: Real>(x: &mut [Complex<T>], scratch: &mut [Complex<T>], tw: &[Complex<T>]) {
+    stockham_impl(x, scratch, tw, false);
+}
+
+/// [`stockham`] with every flush applied in every stage (no fast path);
+/// bit-identical by construction, kept to test that claim.
+#[doc(hidden)]
+pub fn stockham_always_flush<T: Real>(
+    x: &mut [Complex<T>],
+    scratch: &mut [Complex<T>],
+    tw: &[Complex<T>],
+) {
+    stockham_impl(x, scratch, tw, true);
+}
+
+fn stockham_impl<T: Real>(
+    x: &mut [Complex<T>],
+    scratch: &mut [Complex<T>],
+    tw: &[Complex<T>],
+    always_flush: bool,
+) {
     let big_n = x.len();
     assert_eq!(big_n, 2 * tw.len(), "twiddle table does not match length");
+    flush_all(x);
+    let tw_small = tw.iter().any(|w| {
+        w.re.flush().nonzero_below_pow2(FAST_TWIDDLE_LOG2)
+            || w.im.flush().nonzero_below_pow2(FAST_TWIDDLE_LOG2)
+    });
     let y = &mut scratch[..big_n];
     let mut n = big_n;
     let mut s = 1;
     let mut data_in_x = true;
     while n > 1 {
-        if data_in_x {
-            stage(x, y, n, s, tw, big_n / n);
+        let (src, dst): (&[Complex<T>], &mut [Complex<T>]) = if data_in_x {
+            (&*x, &mut *y)
         } else {
-            stage(y, x, n, s, tw, big_n / n);
+            (&*y, &mut *x)
+        };
+        if always_flush || tw_small || stage_needs_flush(&src[..big_n]) {
+            stage::<T, true>(src, dst, n, s, tw, big_n / n);
+        } else {
+            stage::<T, false>(src, dst, n, s, tw, big_n / n);
         }
         data_in_x = !data_in_x;
         n /= 2;
@@ -242,6 +342,15 @@ pub fn stockham<T: Real>(x: &mut [Complex<T>], scratch: &mut [Complex<T>], tw: &
     // Final n == 1 step with eo == true: copy the result into x.
     if !data_in_x {
         x.copy_from_slice(y);
+    }
+}
+
+/// Flush every component (VDS-1.1 operand flushing of a kernel input).
+#[inline]
+fn flush_all<T: Real>(x: &mut [Complex<T>]) {
+    for v in x {
+        v.re = v.re.flush();
+        v.im = v.im.flush();
     }
 }
 
@@ -254,8 +363,8 @@ pub fn fft_1d<T: Real>(x: &mut [Complex<T>], scratch: &mut [Complex<T>], dir: Di
             stockham(x, scratch, T::twiddles_inverse(m));
             let scale = T::pow2(-(m as i32));
             for v in x.iter_mut() {
-                v.re = v.re * scale;
-                v.im = v.im * scale;
+                v.re = (v.re * scale).flush();
+                v.im = (v.im * scale).flush();
             }
         }
     }
@@ -353,8 +462,8 @@ pub fn fft_2d_tables<T: Real>(
         if inverse_scaling {
             let scale = T::pow2(-(log2_len(x.len()) as i32));
             for v in x.iter_mut() {
-                v.re = v.re * scale;
-                v.im = v.im * scale;
+                v.re = (v.re * scale).flush();
+                v.im = (v.im * scale).flush();
             }
         }
     };

@@ -1,5 +1,5 @@
 """Python results are byte-equal to the committed conformance vectors
-(conformance/vectors/v1) for a subset of cases: scattering (S, r2,
+(conformance/vectors/v2, numerics_version 2) for a subset of cases: scattering (S, r2,
 log_mean), training runs and benchmark reports."""
 
 import hashlib
@@ -13,7 +13,7 @@ import pytest
 import vikshep_compute as vc
 
 ROOT = Path(__file__).resolve().parents[3]
-VECTORS = ROOT / "conformance" / "vectors" / "v1"
+VECTORS = ROOT / "conformance" / "vectors" / f"v{vc.NUMERICS_VERSION}"
 
 
 def _load():
@@ -50,6 +50,10 @@ SCATTER_CASES = [
     "scatter/2d/32x32/J1-Q1-L4/circular.circular/trivial/o2/uniform",
     "scatter/2d/32x32/J1-Q1-L4/circular.circular/so2_relative/o2/uniform",
     "scatter/2d/32x32/J1-Q1-L8/zero_pad.circular/so2_relative/o2/uniform",
+    # VDS-1.1 flush-to-zero: subnormal and near-FLT_MIN inputs
+    "scatter/1d/256/J4-Q2-L1/circular/trivial/o2/near_subnormal",
+    "scatter/1d/256/J4-Q2-L1/zero_pad/trivial/o2/subnormal",
+    "scatter/2d/32x32/J2-Q1-L4/circular.circular/so2_relative/o2/flt_min_band",
 ]
 
 
@@ -113,5 +117,5 @@ def test_embedded_selftest():
 
 
 def test_versions():
-    assert vc.NUMERICS_VERSION == 1 and vc.TIER2_VERSION == 1
+    assert vc.NUMERICS_VERSION == 2 and vc.TIER2_VERSION == 1
     assert isinstance(vc.__version__, str) and vc.PLATFORM

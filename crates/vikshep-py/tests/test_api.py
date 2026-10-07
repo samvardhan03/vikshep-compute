@@ -105,7 +105,7 @@ def test_anomaly_index_flags_an_outlier():
     assert r["kth_distance"][1] > 4 * r["kth_distance"][0]
     assert list(r["flagged"]) == [False, True]
     graph = json.loads(r["graph_json"])
-    assert len(graph["nodes"]) == 62 and graph["numerics_version"] == 1
+    assert len(graph["nodes"]) == 62 and graph["numerics_version"] == vc.NUMERICS_VERSION
     assert set(graph["nodes"][0]) == {"flagged", "id", "x", "y"}
     again = vc.anomaly_query(vc.anomaly_index(refs, tau=1.0, k=5, seed=11), queries)
     assert again["graph_json"] == r["graph_json"]

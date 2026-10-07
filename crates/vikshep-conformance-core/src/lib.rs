@@ -6,7 +6,7 @@
 //!   `vikshep-detmath` function and of the random streams.
 //! * Conformance suite v1 ([`suite`]): FFT, kernel and scattering cases
 //!   expanded from `conformance/cases.toml`, with expected vectors in
-//!   `conformance/vectors/v1/`. The sweeps are part of it as `sweep/*` cases.
+//!   `conformance/vectors/v2/`. The sweeps are part of it as `sweep/*` cases.
 //!
 //! The sweep definitions below are normative: they are reproduced in the
 //! specification, and any change to them is a change of conformance vectors.
@@ -25,7 +25,7 @@ pub const SWEEP_LEN: usize = 1_000_000;
 pub const SWEEP_SEED: u64 = 0x5644_5331;
 
 /// Golden hashes for the current numerics version.
-pub const GOLDEN_HASHES_JSON: &str = include_str!("../../../conformance/vectors/v1/hashes.json");
+pub const GOLDEN_HASHES_JSON: &str = include_str!("../../../conformance/vectors/v2/hashes.json");
 
 /// Exact 2^e for binary64, -1022 <= e <= 1023.
 fn pow2_f64(e: i32) -> f64 {

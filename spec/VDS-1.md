@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| Status | Draft, VDS-1.1. Complete for `numerics_version = 2` (sections 1 to 14; flush-to-zero, section 8.1) and `tier2_version = 1` (sections 15 to 19); bindings and data plane in section 20 |
-| Numerics version | 2 (VDS-1.1; version 1 preserved subnormals) |
+| Status | Draft, VDS-1.2. Complete for `numerics_version = 3` (sections 1 to 14; flush-to-zero section 8.1, before-rounding multiplication tininess section 8.3) and `tier2_version = 1` (sections 15 to 19); bindings and data plane in section 20 |
+| Numerics version | 3 (VDS-1.2; version 2 judged tininess after rounding; version 1 preserved subnormals) |
 | Tier-2 version | 1 |
 | Reference implementation | this repository (`vikshep-compute`), Rust CPU code |
 | Copyright | Samvardhan Singh |
@@ -646,6 +646,98 @@ under flushing.
    `numerics_version` is bumped, and all conformance vectors are regenerated.
 4. The measurement, its data, and the outcome are recorded in this section.
 
+### 8.3 Amendment VDS-1.2: tininess before rounding for multiplication
+
+**Finding (2026-10-21, Metal backend B2-r, AMD Radeon Pro 555):** The Metal
+backend passes 400 of 402 suite v2 cases.  The two failures are
+`mul_real_filter/1x256/round_to_flt_min` and
+`mul_real_filter/32x32/round_to_flt_min`.  Both involve a product whose
+EXACT value lies just below FLT_MIN (`2^-126`) but which rounds to exactly
+FLT_MIN.  VDS-1.1 judges tininess after rounding, so the CPU reference kept
+the result as FLT_MIN.  The AMD GCN hardware judges tininess before rounding
+in its hardware multiplier and cannot be overridden under Metal; it returned
+the signed zero instead.
+
+**Rejected alternatives:** (a) Accept ±0 as conforming for "before-rounding"
+backends; (b) a per-backend capability flag.  Both let two conforming backends
+produce different bytes for the same input, which breaks the single-conformance
+promise.  The rule must be one that every backend can implement exactly.
+
+**VDS-1.2 rule:** Replace VDS-1.1 rule 4 (tininess after rounding) for
+multiplications:
+
+1. **Multiplication (changed).** For every Tier-1 binary32 multiply `a·b`,
+   tininess is judged on the exact product before rounding.  Formally:
+   - Compute `r = fl32(ftz(a) * ftz(b))` (operands flushed per rule 3, result
+     rounded to binary32).
+   - Compute `e = (a as f64) * (b as f64)` (exact: two 24-bit significands
+     fit in binary64's 53-bit mantissa without rounding).
+   - If `|e| < FLT_MIN`: the result is `copysign(0, r)` (signed zero whose
+     sign equals the sign of the rounded product, which is IEEE-correct for
+     the operand signs).
+   - Otherwise (`|e| >= FLT_MIN`): the result is `r` (which is then normal or
+     infinite, because if the exact product is at least FLT_MIN then its
+     correctly rounded binary32 value is also at least FLT_MIN).
+
+   Implementation (`vikshep_numerics::flush::mul_tier1`):
+   ```rust
+   #[inline(always)]
+   fn mul_tier1(a: f32, b: f32) -> f32 {
+       let r = a * b;
+       if r.abs() <= f32::MIN_POSITIVE && r != 0.0 {
+           let exact = (a as f64) * (b as f64);
+           if exact.abs() < f32::MIN_POSITIVE as f64 {
+               0.0f32.copysign(r)
+           } else {
+               r
+           }
+       } else {
+           ftz(r)
+       }
+   }
+   ```
+   Every Tier-1 multiplication — butterfly products of the FFT, filter
+   products, and both squares of the modulus — uses `mul_tier1`.
+
+2. **Addition and subtraction (unchanged).** Proof that before- and
+   after-rounding tininess agree for `+` and `-` in Tier-1 kernels:
+   - Inputs are never subnormal after DAZ (rule 2 of section 8.1).
+   - Same-sign addition: the sum of two normals is at least `2 * FLT_MIN`,
+     so the exact sum is normal and never enters the grey zone.
+   - Opposite-sign subtraction: if `|a - b| < FLT_MIN` with `a, b` both
+     normal, then `|a| / 2 ≤ |b| ≤ 2|a|` (because outside this range the
+     difference is at least `|a| / 2 ≥ FLT_MIN / 2`, and fl32 of that is
+     either 0 or above FLT_MIN).  Within the Sterbenz band the subtraction
+     is exact, so the rounded result equals the exact result and
+     before/after-rounding tininess are the same.
+   - A test (`crates/vikshep-numerics/tests/fft.rs`) verifies the fast-path
+     proof still holds: the before-rounding and after-rounding fast paths
+     are bit-identical.
+
+3. **sqrt (unchanged).** The square root of a normal binary32 number `x ≥
+   FLT_MIN = 2^-126` is at least `2^-63`, which is normal and far above
+   FLT_MIN; the result is never tiny.
+
+4. **Versions.** `numerics_version = 3`.  Suites v1 and v2 are kept for
+   history; the current conformance vectors are in `conformance/vectors/v3/`
+   (suite v3, 434 cases: the 402 cases of v2 plus 24 additional
+   `round_to_flt_min` cases for 1-D FFT across all sizes and directions, 1
+   additional `round_to_flt_min` modulus case, and 7 additional
+   `round_to_flt_min` filter-multiplication cases for the new canvas 64×4).
+   The `round_to_flt_min` cases that returned FLT_MIN in v2 return ±0 in v3,
+   confirming the rule change.  The FFT and modulus `round_to_flt_min` cases
+   verify that the new rule has no effect there (exact products of
+   post-DAZ-butterfly differences and of squared post-DAZ components cannot
+   land in the grey zone).
+
+**Change log:**
+
+| Version | Date | Change |
+|---|---|---|
+| VDS-1.0 | 2026-09-29 | Baseline (subnormals preserved, `numerics_version` 1) |
+| VDS-1.1 | 2026-10-03 | Flush-to-zero; tininess after rounding; `numerics_version` 2 |
+| VDS-1.2 | 2026-10-21 | Tininess before rounding for multiplications; `numerics_version` 3 |
+
 ---
 
 ## 9. Canonical serialization and hashing
@@ -951,7 +1043,7 @@ neighbour distance more than ten times that of every other event
 | Id | Question | Status | Default / resolution path |
 |---|---|---|---|
 | D-MATH | Source of portable transcendental functions | Decided: Option A (`libm =0.2.16`, no features) | Revisit only if the cross-platform sweep fails (section 4.2) |
-| D-FTZ | Preserve subnormals or flush to zero on every backend | **Closed: flush** (Metal measurement 2026-10-03; VDS-1.1 defines FTZ semantics, section 8.1) | VDS-1.1: flush-to-zero for all backends; CPU emulation required; `numerics_version` bumped from 1 to 2; conformance vectors regenerated |
+| D-FTZ | Preserve subnormals or flush to zero on every backend | **Closed: flush** (Metal measurement 2026-10-03; VDS-1.1 defines FTZ semantics, section 8.1; VDS-1.2 refines tininess rule for multiplication, section 8.3) | VDS-1.1: flush-to-zero for all backends; CPU emulation required; `numerics_version` bumped from 1 to 2. VDS-1.2: before-rounding tininess for multiplication; `numerics_version` bumped to 3; conformance vectors regenerated |
 | D-SQRT | Is `sqrt` correctly rounded on each GPU backend? | Metal: **correctly rounded** (2026-10-03, AMD Radeon Pro 555, GCN 4th-gen; `precise::sqrt` verified bit-exact vs. CPU `f32::sqrt()` over 2^20 inputs — no Markstein fallback needed on this hardware). CUDA: open. | CPU: correctly rounded (IEEE-754 requires it; Rust lowers to the hardware square-root instruction). CUDA: `--prec-sqrt=true` expected to give a correctly rounded `sqrt`, to be verified. Fallback for any backend that fails: a Markstein-style square root using an exact fused multiply-add and a final correction step, proven correctly rounded; this is the only place an FMA could be admitted, and only by amendment of this specification |
 | D-DIV | Division in Tier 1 | Decided: no division in Tier 1 | r2 ratios, pooling means and every other quotient are computed on the host (Tier 2) |
 | D-STEER | Steerable-basis orientation synthesis | Open | Changes arithmetic; allowed only if the reference adopts it under a new `numerics_version` |

@@ -1,5 +1,5 @@
 """Python results are byte-equal to the committed conformance vectors
-(conformance/vectors/v2, numerics_version 2) for a subset of cases: scattering (S, r2,
+(conformance/vectors/v3, numerics_version 3) for a subset of cases: scattering (S, r2,
 log_mean), training runs and benchmark reports."""
 
 import hashlib
@@ -117,5 +117,5 @@ def test_embedded_selftest():
 
 
 def test_versions():
-    assert vc.NUMERICS_VERSION == 2 and vc.TIER2_VERSION == 1
+    assert vc.NUMERICS_VERSION == 3 and vc.TIER2_VERSION == 1
     assert isinstance(vc.__version__, str) and vc.PLATFORM

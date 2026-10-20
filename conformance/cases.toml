@@ -1,4 +1,6 @@
-# VDS-1 conformance suite v2, numerics_version 2 (VDS-1.1 flush-to-zero).
+# VDS-1 conformance suite v3, numerics_version 3 (VDS-1.2: tininess before
+# rounding for binary32 multiplications; VDS-1.1 flush-to-zero for all other
+# operations).
 #
 # Each table is a grid; `vikshep-conformance` expands it into cases in the
 # order written (outer to inner: the keys as listed). Case identifiers and
@@ -6,22 +8,24 @@
 # stream id of a case is the first 8 bytes (little-endian) of
 # SHA3-256(case id); inputs are drawn from Stream(master_seed, stream_id).
 #
-# Expected outputs: conformance/vectors/v2/ (v1/ is kept for history), produced by
+# Expected outputs: conformance/vectors/v3/ (v1/ and v2/ kept for history),
+# produced by:
 #   cargo run --release -p vikshep-conformance -- generate
 # Licence of this file and of conformance/vectors/: CC-BY-4.0.
 
-numerics_version = 2
+numerics_version = 3
 master_seed = 0x56445331
 # Outputs up to this many bytes are stored in full; larger ones by hash.
 store_bytes_max = 16384
 
-# VDS-1.1 adversarial inputs (spec/VDS-1.md section 11.2):
+# VDS-1.1/1.2 adversarial inputs (spec/VDS-1.md section 11.2):
 #   subnormal          subnormal inputs: flushed to signed zero by the host
 #   flt_min_band       values just above FLT_MIN: sums and differences land
 #                      below (flushed), exactly at and above FLT_MIN
 #   sqrt_flt_min_band  values near 2^-63: squares below, at and above FLT_MIN
-#   round_to_flt_min   products that round up to exactly FLT_MIN (tininess is
-#                      judged after rounding: not flushed)
+#   round_to_flt_min   products that round up to exactly FLT_MIN (VDS-1.2:
+#                      exact product below FLT_MIN, flushed to signed zero;
+#                      VDS-1.1 had kept them because fl32 == FLT_MIN)
 #   long_tail          a filter decaying to 2^-149: subnormal entries flushed
 #                      on the host
 #   signed_zero        every product subnormal: flushed to the zero of its sign
@@ -30,7 +34,7 @@ store_bytes_max = 16384
 [fft1d]
 log2_sizes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
 directions = ["forward", "inverse"]
-inputs = ["uniform", "impulse", "alternating", "near_subnormal", "large", "subnormal", "flt_min_band"]
+inputs = ["uniform", "impulse", "alternating", "near_subnormal", "large", "subnormal", "flt_min_band", "round_to_flt_min"]
 
 # Standalone 2-D FFTs (rows, cols).
 [fft2d]
@@ -41,10 +45,10 @@ inputs = ["uniform"]
 # Element-wise kernels.
 [modulus]
 lengths = [1024]
-inputs = ["uniform", "zeros", "near_subnormal", "large", "alternating", "subnormal", "flt_min_band", "sqrt_flt_min_band"]
+inputs = ["uniform", "zeros", "near_subnormal", "large", "alternating", "subnormal", "flt_min_band", "sqrt_flt_min_band", "round_to_flt_min"]
 
 [mul_real_filter]
-canvases = [[1, 256], [32, 32]]
+canvases = [[1, 256], [32, 32], [64, 4]]
 inputs = ["uniform", "near_subnormal", "large", "subnormal", "round_to_flt_min", "long_tail", "signed_zero"]
 
 # Scattering grids. Every case records four outputs: S (coefficients),

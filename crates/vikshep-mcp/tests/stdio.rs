@@ -122,7 +122,7 @@ fn expected_oid(case: &str, output: &str) -> String {
 }
 
 /// Manifest hash of the 1-D case below, pinned: equal on every platform.
-const MANIFEST_HASH_1D: &str = "6ff71ab48d632625384a0f74aaa30f965fe3f06c444ea3e4ff9d4f2623a061cf";
+const MANIFEST_HASH_1D: &str = "5b4c3d61abb09544c2997e2d6b05b4d6372b074bb35ccfa6105a263b7881acb3";
 
 fn exercise(client: &mut Client, store: &mut dyn TensorStore) {
     client.handshake();

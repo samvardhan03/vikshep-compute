@@ -18,9 +18,10 @@ pub mod provenance;
 pub mod rng;
 pub mod sum;
 
-/// Current numerics version (VDS-1 section 10): 2 since VDS-1.1
-/// (flush-to-zero of binary32 Tier-1 operands and results, section 8.1).
-pub const NUMERICS_VERSION: u32 = 2;
+/// Current numerics version (VDS-1 section 10): 3 since VDS-1.2
+/// (before-rounding tininess for binary32 Tier-1 multiplications, section
+/// 8.3; flush-to-zero for all other operations since VDS-1.1, section 8.1).
+pub const NUMERICS_VERSION: u32 = 3;
 
 /// Version of the Tier-2 algorithms of VDS-1 sections 15 to 19 (statistics,
 /// training, calibration, anomaly search), versioned independently of the

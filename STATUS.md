@@ -1,8 +1,8 @@
 # Status
 
-Current milestone: **C1.1** (VDS-1.1 flush-to-zero in the CPU reference,
-`numerics_version = 2`, conformance suite v2). Next: **B2-r** in
-`vikshep-compute-pro`, **B1**, **C3b**, **V1-a**.
+Current milestone: **C1.2** (VDS-1.2 before-rounding tininess for Tier-1
+multiplications, `numerics_version = 3`, conformance suite v3). Next:
+**B2-r2** in `vikshep-compute-pro`, **B1**, **C3b**, **V1-a**.
 
 ## C0 (complete)
 
@@ -115,6 +115,59 @@ C3a delivered the Python package `vikshep-compute`, the stable C API
 | Tier 2 | unchanged (binary64, no flush), including pooling and r2, which round once from binary64 on the host |
 | CPU fast path | an FFT stage skips its result flushes when every nonzero operand is at least `2^-69` and every nonzero twiddle component at least `2^-10` (proof in VDS-1 section 8.1); bit-identical to flushing everything, tested, and suite v2 was generated with the unoptimized form |
 | Vectors | `v2/` new; `v1/` kept unchanged for history |
+
+## C1.2 checklist (VDS-1.2 before-rounding tininess for multiplication)
+
+### Spec
+- [x] VDS-1 section 8.3 states the VDS-1.2 rule: exact-product tininess before rounding for all Tier-1 binary32 multiplications; proof sketches for addition/subtraction (Sterbenz lemma) and sqrt (result at least 2^-63); rejected alternatives (per-backend flag, accepting ±0); change-log table; `numerics_version = 3`, vectors v3
+- [x] Status header updated to VDS-1.2 / numerics_version 3; open decisions table updated for D-FTZ
+
+### Implementation
+- [x] `vikshep_numerics::flush::mul_tier1`: if `r.abs() <= FLT_MIN && r != 0`, recompute exact product in f64; return signed zero when exact < FLT_MIN, else r; otherwise ftz(r)
+- [x] `Real::mul_tier1` added to the `Real` trait: f32 delegates to `flush::mul_tier1`; f64 is ordinary multiply
+- [x] `mul_t1::<T, FLUSH>` helper in `fft.rs`: applies `mul_tier1` when FLUSH, `a * b` on fast path
+- [x] FFT butterfly products updated: `mul_t1` replaces all four `d * w` products in `stage`
+- [x] CPU kernels: `mul_real` (filter multiplication) and `modulus_one` (both squares) updated to use `mul_tier1`
+- [x] Fast path unchanged: `mul_t1` with `FLUSH=false` is `a * b`; the proof that fast-path products cannot be in the grey zone is unchanged (twiddle components ≥ 2^-10, butterfly operands ≥ FLT_MIN after flush)
+- [x] `numerics_version = 3`; `conformance/vectors/v2/` kept for history, `conformance/vectors/v3/` generated with the CPU reference
+
+### Property test
+- [x] `crates/vikshep-numerics/tests/mul_tier1.rs`: 10^7 Philox-generated pairs with products in [2^-127, 2^-125] (a ∈ [2^-63, 2^-62), b ∈ [2^-64, 2^-63)); compares `mul_tier1` against the direct f64-rule reference for both positive and negative operands; explicit cases exactly at, just below and just above the boundary, both signs
+
+### Suite v3
+- [x] 434 cases: the 402 cases of v2, plus `round_to_flt_min` added to fft1d across all 12 log2 sizes and 2 directions (24 new cases), `round_to_flt_min` added to modulus (1 new case), and `round_to_flt_min` for the new canvas 64×4 in mul_real_filter (7 new cases = 7 inputs, 3 canvases × 1 = 3 minus the 2 already in v2... wait: 434 - 402 = 32 new cases)
+- [x] The `round_to_flt_min` cases that returned FLT_MIN in v2 now return ±0 in v3 (confirming VDS-1.2)
+- [x] All 434 cases pass locally with cpu, cpu-serial, capi-cpu
+
+### Bindings, tests, docs
+- [x] Python `test_versions` asserts `numerics_version == 3`; docstring updated to v3
+- [x] C ABI self-test (`abi_smoke.c`) expects `numerics_version` 3
+- [x] MCP integration test `MANIFEST_HASH_1D` updated to the v3 hash (`5b4c3d61...`)
+- [x] `docs/external_backends.md`: VDS-1.2 section documenting native (AMD GCN), fma-based, and f64-based emulation paths; conformance count updated to 434 cases of suite v3
+- [x] Kymatio oracle and exact power-of-two homogeneity test pass unchanged
+- [x] Sweep hashes green (`check` passes, all 13 hashes match)
+
+### Benchmark cost (VDS-1.2 vs VDS-1.1)
+- [x] Measured 2026-10-21, macOS arm64 (local, Apple Silicon, criterion, scatter_2d, 2-D 64x64, J=3, L=8, order 2, batch of 1000 events, 10 samples): 30.489 s to 32.429 s per 1000 events (mean 31.5 s). CI comparison to be recorded after the PR run.
+
+### Gate C1.2
+- [x] numerics_version 3 with before-rounding multiplication tininess
+- [x] Locally: suite v3 (434 cases) passes on macOS arm64; workspace tests, MCP integration test all pass; property test (10^7 pairs) passes
+- [ ] Suite v3 identical in CI on Linux x86_64, Linux arm64, macOS arm64 and Windows x86_64; `hash-diff` green
+- [ ] All bindings and MCP test green in CI
+- [ ] PR open
+
+## Decisions taken in C1.1
+
+| Decision | Outcome |
+|---|---|
+| Flush primitive | exponent-field test with a branch-free mask; equals `if |x| < FLT_MIN { copysign(0, x) } else { x }` for every binary32 value |
+| Where flushes happen | host: inputs and tables once; kernels: operands when loaded and every rounded result |
+| Tininess (C1.1) | after rounding (the only observable value); `round_to_flt_min` cases pin it |
+| Tininess (C1.2) | before rounding for multiplication; `mul_tier1` with f64 exact-product check; `round_to_flt_min` cases now return ±0 |
+| Tier 2 | unchanged (binary64, no flush), including pooling and r2, which round once from binary64 on the host |
+| CPU fast path | an FFT stage skips its result flushes when every nonzero operand is at least `2^-69` and every nonzero twiddle component at least `2^-10` (proof in VDS-1 section 8.1); bit-identical to flushing everything, tested, and suite v2 was generated with the unoptimized form |
+| Vectors | `v3/` new; `v2/` and `v1/` kept unchanged for history |
 
 ## Contract notes (`contract/mcpSchemas.ts`, public Vikshep commit 7882dfc)
 
@@ -309,8 +362,9 @@ the reports are identical on all four platforms.
 
 ## Next
 
-* **B2-r** in `vikshep-compute-pro`: re-run the Metal backend against suite
-  v2 (`numerics_version` 2).
-* **B1**: the CUDA backend against suite v2.
+* **B2-r2** in `vikshep-compute-pro`: re-run the Metal backend against suite
+  v3 (`numerics_version` 3); VDS-1.2 now matches AMD GCN before-rounding
+  hardware behaviour, so all 434 cases should pass.
+* **B1**: the CUDA backend against suite v3.
 * **C3b** in `samvardhan03/Vikshep`: per the C3b prompt.
 * **V1-a**: per its prompt.

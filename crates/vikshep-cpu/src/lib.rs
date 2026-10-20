@@ -18,7 +18,7 @@ use vikshep_backend_api::{
 };
 use vikshep_numerics::NUMERICS_VERSION;
 use vikshep_numerics::fft::{Workspace, fft_2d_tables};
-use vikshep_numerics::flush::ftz;
+use vikshep_numerics::flush::{ftz, mul_tier1};
 
 /// Minimum number of elements per parallel task for element-wise kernels.
 const ELEMENTWISE_CHUNK: usize = 1 << 14;
@@ -75,20 +75,20 @@ impl CpuBackend {
     }
 }
 
-/// `(re, im) -> (re * h, im * h)`, operands and results flushed.
+/// `(re, im) -> (re * h, im * h)` with VDS-1.2 tininess (before rounding).
 #[inline]
 fn mul_real(v: &mut Complex32, h: f32) {
     let h = ftz(h);
-    v.re = ftz(ftz(v.re) * h);
-    v.im = ftz(ftz(v.im) * h);
+    v.re = mul_tier1(ftz(v.re), h);
+    v.im = mul_tier1(ftz(v.im), h);
 }
 
-/// `(re, im) -> (sqrt(re * re + im * im), +0)`, operands and every result
-/// (both squares, the sum, the root) flushed.
+/// `(re, im) -> (sqrt(re * re + im * im), +0)` with VDS-1.2 tininess on
+/// the squares; the sum and root use VDS-1.1 flush.
 #[inline]
 fn modulus_one(v: &mut Complex32) {
     let (re, im) = (ftz(v.re), ftz(v.im));
-    let s = ftz(ftz(re * re) + ftz(im * im));
+    let s = ftz(mul_tier1(re, re) + mul_tier1(im, im));
     *v = Complex32::new(ftz(s.sqrt()), 0.0);
 }
 
@@ -264,8 +264,8 @@ mod tests {
         assert_eq!(v[0].re, 0.0, "square below FLT_MIN is flushed");
         assert_eq!(v[1].re, r, "square exactly FLT_MIN is kept");
         assert!(v[2].re > r);
-        // product that rounds up to exactly FLT_MIN is kept (tininess after
-        // rounding); a tiny negative product flushes to -0
+        // VDS-1.2: exact product just below FLT_MIN flushes to signed zero
+        // (VDS-1.1 had kept it because fl32 rounded to FLT_MIN)
         let canvas = Canvas::one_d(2);
         let mut d = [Complex32::new(min, -min), Complex32::new(-1e-20, 1e-20)];
         let one_minus = f32::from_bits(1.0f32.to_bits() - 1); // 1 - 2^-24
@@ -273,8 +273,8 @@ mod tests {
         CpuBackend::serial()
             .mul_real_filter(&mut d[..1], Canvas::one_d(1), &bank[..1], &[0])
             .unwrap();
-        assert_eq!(d[0].re.to_bits(), min.to_bits());
-        assert_eq!(d[0].im.to_bits(), (-min).to_bits());
+        assert_eq!(d[0].re.to_bits(), 0u32, "+0 for positive exact-below-FLT_MIN");
+        assert_eq!(d[0].im.to_bits(), 0x8000_0000u32, "-0 for negative exact-below-FLT_MIN");
         let mut e = [Complex32::new(-1e-20, 1e-20), Complex32::new(3.0, 0.0)];
         CpuBackend::serial()
             .mul_real_filter(&mut e, canvas, &[1e-20, 1e-20], &[0])

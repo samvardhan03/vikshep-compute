@@ -19,12 +19,12 @@ use vikshep_scatter::{Group, PadPolicy, ScatterConfig, ScatterOutput, Scattering
 /// The suite definition, compiled in.
 pub const CASES_TOML: &str = include_str!("../../../conformance/cases.toml");
 
-/// `expected.json` of suite v1, compiled in (for self-tests without the
-/// repository checkout: `vikshep-capi`, `vikshep-py`).
-pub const EXPECTED_JSON: &str = include_str!("../../../conformance/vectors/v2/expected.json");
+/// `expected.json` of the current suite, compiled in (for self-tests without
+/// the repository checkout: `vikshep-capi`, `vikshep-py`).
+pub const EXPECTED_JSON: &str = include_str!("../../../conformance/vectors/v3/expected.json");
 
-/// `expected.bin` of suite v1, compiled in.
-pub const EXPECTED_BIN: &[u8] = include_bytes!("../../../conformance/vectors/v2/expected.bin");
+/// `expected.bin` of the current suite, compiled in.
+pub const EXPECTED_BIN: &[u8] = include_bytes!("../../../conformance/vectors/v3/expected.bin");
 
 /// Case-id prefixes of the `quick` self-test subset: FFTs, the element-wise
 /// kernels, 1-D and 2-D scattering, and the fast Tier-2 cases.
@@ -48,7 +48,7 @@ pub const QUICK_SUBSET: &[&str] = &[
 /// Default directory of the expected vectors.
 #[must_use]
 pub fn default_vectors_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../conformance/vectors/v2")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../conformance/vectors/v3")
 }
 
 // ---------------------------------------------------------------------------

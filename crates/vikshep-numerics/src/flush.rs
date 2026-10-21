@@ -100,12 +100,20 @@ mod tests {
         let filt = f32::from_bits(0x3f7f_ffff); // 1 - 2^-24
         let exact = (data as f64) * (filt as f64);
         assert!(exact < min64, "exact product below FLT_MIN");
-        assert_eq!((data * filt).to_bits(), min.to_bits(), "fl32 rounds up to FLT_MIN");
+        assert_eq!(
+            (data * filt).to_bits(),
+            min.to_bits(),
+            "fl32 rounds up to FLT_MIN"
+        );
         let result = mul_tier1(data, filt);
         assert_eq!(result.to_bits(), 0, "before-rounding: flush to +0");
         // negative sign preserved
         let result_neg = mul_tier1(-data, filt);
-        assert_eq!(result_neg.to_bits(), 0x8000_0000u32, "before-rounding: flush to -0");
+        assert_eq!(
+            result_neg.to_bits(),
+            0x8000_0000u32,
+            "before-rounding: flush to -0"
+        );
         // subnormal product: both VDS-1.1 and VDS-1.2 flush to zero
         let tiny = f32::from_bits(1); // smallest positive subnormal
         assert_eq!(mul_tier1(min, tiny).to_bits(), 0, "product is subnormal");

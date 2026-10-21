@@ -289,8 +289,10 @@ fn stage<T: Real, const FLUSH: bool>(
             *y0 = Complex::new(fl::<T, FLUSH>(a.re + b.re), fl::<T, FLUSH>(a.im + b.im));
             let d_re = fl::<T, FLUSH>(a.re - b.re);
             let d_im = fl::<T, FLUSH>(a.im - b.im);
-            let re = fl::<T, FLUSH>(mul_t1::<T, FLUSH>(d_re, w.re) - mul_t1::<T, FLUSH>(d_im, w.im));
-            let im = fl::<T, FLUSH>(mul_t1::<T, FLUSH>(d_re, w.im) + mul_t1::<T, FLUSH>(d_im, w.re));
+            let re =
+                fl::<T, FLUSH>(mul_t1::<T, FLUSH>(d_re, w.re) - mul_t1::<T, FLUSH>(d_im, w.im));
+            let im =
+                fl::<T, FLUSH>(mul_t1::<T, FLUSH>(d_re, w.im) + mul_t1::<T, FLUSH>(d_im, w.re));
             *y1 = Complex::new(re, im);
         }
     }

@@ -273,8 +273,16 @@ mod tests {
         CpuBackend::serial()
             .mul_real_filter(&mut d[..1], Canvas::one_d(1), &bank[..1], &[0])
             .unwrap();
-        assert_eq!(d[0].re.to_bits(), 0u32, "+0 for positive exact-below-FLT_MIN");
-        assert_eq!(d[0].im.to_bits(), 0x8000_0000u32, "-0 for negative exact-below-FLT_MIN");
+        assert_eq!(
+            d[0].re.to_bits(),
+            0u32,
+            "+0 for positive exact-below-FLT_MIN"
+        );
+        assert_eq!(
+            d[0].im.to_bits(),
+            0x8000_0000u32,
+            "-0 for negative exact-below-FLT_MIN"
+        );
         let mut e = [Complex32::new(-1e-20, 1e-20), Complex32::new(3.0, 0.0)];
         CpuBackend::serial()
             .mul_real_filter(&mut e, canvas, &[1e-20, 1e-20], &[0])

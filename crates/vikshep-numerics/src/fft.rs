@@ -14,13 +14,15 @@
 //! with one rounding per operation and no fusion. The result always ends in
 //! the input buffer (for odd `m` the final step copies it from scratch).
 //!
-//! VDS-1.1 (section 8.1): in binary32 every operand is flushed to zero if
-//! subnormal before use, and every individual result (sum, difference,
-//! product) is flushed after rounding ([`Real::flush`]); in binary64 (host,
-//! Tier 2) `flush` is the identity. The input of a transform and the twiddle
-//! tables are flushed once on entry; every later operand is the flushed
-//! result of an earlier operation, so flushing it again would be the
-//! identity and is not repeated.
+//! VDS-1.1/1.2 (sections 8.1 and 8.3): in binary32 every operand is flushed
+//! to zero if subnormal before use, and every individual result (sum,
+//! difference, product) is flushed after rounding ([`Real::flush`]); in
+//! binary64 (host, Tier 2) `flush` is the identity. Every binary32
+//! multiplication uses [`Real::mul_tier1`] (VDS-1.2: exact-product tininess
+//! before rounding). The input of a transform and the twiddle tables are
+//! flushed once on entry; every later operand is the flushed result of an
+//! earlier operation, so flushing it again would be the identity and is not
+//! repeated.
 //!
 //! Binary32 ([`Complex32`]) is the Tier-1 precision. The same code runs in
 //! binary64 ([`Complex64`]) for host-side (Tier-2) filter construction.
@@ -92,6 +94,9 @@ pub trait Real:
     /// VDS-1.1 flush-to-zero: binary32 subnormals become the zero of the
     /// same sign ([`crate::flush::ftz`]); the identity for binary64.
     fn flush(self) -> Self;
+    /// VDS-1.2 multiply: exact-product tininess for binary32
+    /// ([`crate::flush::mul_tier1`]); ordinary multiply for binary64.
+    fn mul_tier1(a: Self, b: Self) -> Self;
     /// True if `self` is nonzero with magnitude below `2^e` (binary32);
     /// always false for binary64, which never flushes.
     fn nonzero_below_pow2(self, e: i32) -> bool;
@@ -135,6 +140,10 @@ impl Real for f32 {
         crate::flush::ftz(self)
     }
     #[inline(always)]
+    fn mul_tier1(a: Self, b: Self) -> Self {
+        crate::flush::mul_tier1(a, b)
+    }
+    #[inline(always)]
     fn nonzero_below_pow2(self, e: i32) -> bool {
         let mag = self.to_bits() & 0x7fff_ffff;
         mag != 0 && mag < (((e + 127) as u32) << 23)
@@ -163,6 +172,10 @@ impl Real for f64 {
     #[inline(always)]
     fn flush(self) -> Self {
         self
+    }
+    #[inline(always)]
+    fn mul_tier1(a: Self, b: Self) -> Self {
+        a * b
     }
     #[inline(always)]
     fn nonzero_below_pow2(self, _e: i32) -> bool {
@@ -244,6 +257,11 @@ fn fl<T: Real, const FLUSH: bool>(x: T) -> T {
     if FLUSH { x.flush() } else { x }
 }
 
+#[inline(always)]
+fn mul_t1<T: Real, const FLUSH: bool>(a: T, b: T) -> T {
+    if FLUSH { T::mul_tier1(a, b) } else { a * b }
+}
+
 /// One level of the recursion: `fft0(n, s, _, src, dst)` without the tail call.
 ///
 /// Iterates over contiguous blocks of `s` elements (slices instead of index
@@ -271,8 +289,10 @@ fn stage<T: Real, const FLUSH: bool>(
             *y0 = Complex::new(fl::<T, FLUSH>(a.re + b.re), fl::<T, FLUSH>(a.im + b.im));
             let d_re = fl::<T, FLUSH>(a.re - b.re);
             let d_im = fl::<T, FLUSH>(a.im - b.im);
-            let re = fl::<T, FLUSH>(fl::<T, FLUSH>(d_re * w.re) - fl::<T, FLUSH>(d_im * w.im));
-            let im = fl::<T, FLUSH>(fl::<T, FLUSH>(d_re * w.im) + fl::<T, FLUSH>(d_im * w.re));
+            let re =
+                fl::<T, FLUSH>(mul_t1::<T, FLUSH>(d_re, w.re) - mul_t1::<T, FLUSH>(d_im, w.im));
+            let im =
+                fl::<T, FLUSH>(mul_t1::<T, FLUSH>(d_re, w.im) + mul_t1::<T, FLUSH>(d_im, w.re));
             *y1 = Complex::new(re, im);
         }
     }

@@ -29,11 +29,7 @@ fn property_near_flt_min() {
     for _ in 0..10_000_000u64 {
         let a = (1.0 + s.next_f32_unit()) * scale_a;
         let b = (1.0 + s.next_f32_unit()) * scale_b;
-        assert_eq!(
-            mul_tier1(a, b).to_bits(),
-            reference(a, b),
-            "a={a} b={b}"
-        );
+        assert_eq!(mul_tier1(a, b).to_bits(), reference(a, b), "a={a} b={b}");
         // negative signs
         assert_eq!(
             mul_tier1(-a, b).to_bits(),
@@ -50,7 +46,11 @@ fn explicit_boundary() {
     let at = f32::from_bits(0x2000_0000u32); // 2^-63; square = FLT_MIN exactly
 
     // exact == FLT_MIN: result is FLT_MIN (not flushed)
-    assert_eq!(mul_tier1(at, at).to_bits(), min.to_bits(), "exact == FLT_MIN");
+    assert_eq!(
+        mul_tier1(at, at).to_bits(),
+        min.to_bits(),
+        "exact == FLT_MIN"
+    );
 
     // exact just above FLT_MIN: fl32 > FLT_MIN, result normal
     let above = f32::from_bits(at.to_bits() + 1);
@@ -64,8 +64,16 @@ fn explicit_boundary() {
     assert!(exact_val < FLT_MIN, "exact is below FLT_MIN");
     assert_eq!((data * filt).to_bits(), min.to_bits(), "fl32 rounds up");
     assert_eq!(mul_tier1(data, filt).to_bits(), 0u32, "+0 for positive");
-    assert_eq!(mul_tier1(-data, filt).to_bits(), 0x8000_0000u32, "-0 for negative");
-    assert_eq!(mul_tier1(data, -filt).to_bits(), 0x8000_0000u32, "-0 for negated filter");
+    assert_eq!(
+        mul_tier1(-data, filt).to_bits(),
+        0x8000_0000u32,
+        "-0 for negative"
+    );
+    assert_eq!(
+        mul_tier1(data, -filt).to_bits(),
+        0x8000_0000u32,
+        "-0 for negated filter"
+    );
 
     // subnormal fl32 result (k=1,2,3 in round_to_flt_min still below FLT_MIN)
     let d1 = f32::from_bits(min.to_bits() + 1); // FLT_MIN + 2^-149

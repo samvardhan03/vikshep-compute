@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/samvardhan03/vikshep-compute/blob/main/spec/certificate.schema.json",
+  "title": "Vikshep Determinism Certificate",
+  "description": "A Determinism Certificate bundles a Vikshep provenance manifest with conformance evidence (suite version, numerics version, backend, local self-test result) and an optional Ed25519 detached signature block. The signature proves WHICH installation produced the certificate; correctness is independently verifiable by any party with the open CPU reference by re-running the computation and comparing output OIDs. Certificates are RFC 8785 canonical JSON.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "manifest", "conformance"],
+  "properties": {
+    "schema": {
+      "description": "Schema identifier and version.",
+      "const": "vikshep.certificate/1"
+    },
+    "manifest": {
+      "description": "The full provenance manifest of the attested computation, following spec/provenance.schema.json. Embedded verbatim so that a verifier can re-run the computation without access to any Vikshep server.",
+      "$ref": "provenance.schema.json"
+    },
+    "conformance": {
+      "description": "Evidence that the issuing installation passed the VDS-1 conformance self-test at the time of issuance.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["suite_version", "numerics_version", "backend", "selftest_result"],
+      "properties": {
+        "suite_version": {
+          "description": "Conformance suite version that was run (3 for suite v3, the current version).",
+          "type": "integer",
+          "minimum": 1
+        },
+        "numerics_version": {
+          "description": "Numerics version of the issuing binary; must equal manifest.numerics_version.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "backend": {
+          "description": "Backend name that ran the self-test, for example 'cpu' or 'cuda'.",
+          "type": "string",
+          "minLength": 1
+        },
+        "selftest_result": {
+          "description": "Outcome of the local conformance self-test.",
+          "enum": ["pass", "fail"]
+        }
+      }
+    },
+    "signature": {
+      "description": "Optional Ed25519 detached signature. Proves which installation issued the certificate. Correctness of the computation is proven separately by re-running with the open CPU reference, so the signature is NOT required to verify a result.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "key_id", "value"],
+      "properties": {
+        "algorithm": {
+          "description": "Signature algorithm.",
+          "const": "ed25519"
+        },
+        "key_id": {
+          "description": "Opaque identifier of the signing key, for example the lowercase hex of the 32-byte Ed25519 public key.",
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "description": "Base64url-encoded 64-byte Ed25519 signature over the SHA3-256 of the RFC 8785 canonical bytes of this certificate without the 'signature' member.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{86}=$"
+        }
+      }
+    }
+  }
+}

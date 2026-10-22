@@ -11,6 +11,7 @@
 //! The sweep definitions below are normative: they are reproduced in the
 //! specification, and any change to them is a change of conformance vectors.
 
+pub mod certificate;
 pub mod suite;
 pub mod tier2;
 

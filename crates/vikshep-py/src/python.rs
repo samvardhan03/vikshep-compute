@@ -801,6 +801,56 @@ fn provenance_manifest(
     Ok((json, hash))
 }
 
+/// Issue a Determinism Certificate (``spec/certificate.schema.json``) from
+/// a provenance manifest JSON string.  Runs the quick conformance self-test
+/// and records the result.  ``backend`` is the name to record (default
+/// ``"cpu"``).  Returns the certificate as a JSON string.
+#[pyfunction]
+#[pyo3(signature = (manifest_json, backend = "cpu"))]
+fn issue_certificate(manifest_json: &str, backend: &str) -> PyResult<String> {
+    vikshep_conformance_core::certificate::issue(manifest_json, backend).map_err(value_err)
+}
+
+/// Verify a Determinism Certificate by re-running the recorded computation
+/// with the open CPU reference and comparing every output OID.
+///
+/// ``cert_json``: the certificate as a JSON string.
+/// ``inputs_dir``: path to a directory containing raw input tensors as
+/// ``<oid>.bin`` files.
+///
+/// Returns a dict with keys ``verified`` (bool), ``manifest_hash_ok`` (bool),
+/// ``operation`` (str), ``outputs`` (list of dicts with ``name``,
+/// ``expected_oid``, ``computed_oid``, ``matches``) and ``error`` (str or
+/// ``None``).
+#[pyfunction]
+fn verify_certificate<'py>(
+    py: Python<'py>,
+    cert_json: &str,
+    inputs_dir: &str,
+) -> PyResult<Bound<'py, PyDict>> {
+    use std::path::Path;
+    let report = vikshep_conformance_core::certificate::verify(cert_json, Path::new(inputs_dir));
+    let out = PyDict::new(py);
+    out.set_item("verified", report.verified)?;
+    out.set_item("manifest_hash_ok", report.manifest_hash_ok)?;
+    out.set_item("operation", &report.operation)?;
+    let outputs_list = PyList::empty(py);
+    for o in &report.outputs {
+        let d = PyDict::new(py);
+        d.set_item("name", &o.name)?;
+        d.set_item("expected_oid", &o.expected_oid)?;
+        d.set_item("computed_oid", &o.computed_oid)?;
+        d.set_item("matches", o.matches)?;
+        outputs_list.append(d)?;
+    }
+    out.set_item("outputs", outputs_list)?;
+    match &report.error {
+        Some(e) => out.set_item("error", e)?,
+        None => out.set_item("error", py.None())?,
+    }
+    Ok(out)
+}
+
 /// Run the conformance self-test against the vectors compiled into this
 /// module: ``subset`` is ``"quick"`` or ``"full"``. Returns a dict with
 /// ``cases``, ``passed``, ``failed`` and the JSON ``report``.
@@ -860,6 +910,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(anomaly_query, m)?)?;
     m.add_function(wrap_pyfunction!(bench_report, m)?)?;
     m.add_function(wrap_pyfunction!(provenance_manifest, m)?)?;
+    m.add_function(wrap_pyfunction!(issue_certificate, m)?)?;
+    m.add_function(wrap_pyfunction!(verify_certificate, m)?)?;
     m.add_function(wrap_pyfunction!(conformance_selftest, m)?)?;
     m.add_function(wrap_pyfunction!(oid, m)?)?;
     m.add_function(wrap_pyfunction!(_conformance_scatter_case, m)?)?;

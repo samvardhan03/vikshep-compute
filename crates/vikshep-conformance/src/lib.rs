@@ -3,4 +3,5 @@
 //! `vikshep-conformance` command, which adds the backends it can test
 //! (including the CPU reference through the C ABI of `vikshep-capi`).
 
+pub use vikshep_conformance_core::certificate;
 pub use vikshep_conformance_core::*;

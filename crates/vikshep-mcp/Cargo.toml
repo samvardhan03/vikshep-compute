@@ -7,7 +7,10 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-publish.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [[bin]]
 name = "vikshep-mcp"
@@ -24,7 +27,9 @@ serde_json.workspace = true
 libc.workspace = true
 
 [dev-dependencies]
-vikshep-conformance-core.workspace = true
+# Path only (no version): cargo drops it from the published manifest, since
+# vikshep-conformance-core is not on crates.io.  Tests run from the repository.
+vikshep-conformance-core = { path = "../vikshep-conformance-core" }
 
 # POSIX shared memory needs `unsafe` (shm_open, mmap). Unsafe code is denied
 # crate-wide and allowed only in the `store::shm` module, where every unsafe

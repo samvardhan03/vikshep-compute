@@ -1,0 +1,217 @@
+name: Release
+
+# Builds every release artifact; publishes only from a version tag (vX.Y.Z).
+# - pull_request (release files changed) and workflow_dispatch: dry run, the
+#   same builds with nothing published.
+# - tag push: PyPI (trusted publishing, environment "pypi"), crates.io
+#   (CARGO_REGISTRY_TOKEN secret, environment "crates-io"), then a GitHub
+#   release with the C/C++ archives.  Publishing waits for every build.
+# Procedure and one-time setup: RELEASING.md.
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "Cargo.toml"
+      - "crates/*/Cargo.toml"
+      - "crates/vikshep-py/pyproject.toml"
+      - "RELEASING.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # On a tag, the tag must equal the workspace version.
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - id: v
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 --locked \
+            | jq -r '.packages[] | select(.name == "vikshep") | .version')"
+          echo "workspace version: $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "tag $GITHUB_REF_NAME does not match workspace version $version"; exit 1
+          fi
+
+  # The same five abi3 wheels as ci.yml (keep the two matrices in step),
+  # each tested with pytest where it runs natively.
+  wheels:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x86_64, os: ubuntu-latest, target: x86_64, manylinux: "2_28", container: "quay.io/pypa/manylinux_2_28_x86_64", test: true }
+          - { name: linux-aarch64, os: ubuntu-24.04-arm, target: aarch64, manylinux: "2_28", container: "quay.io/pypa/manylinux_2_28_aarch64", test: true }
+          - { name: macos-arm64, os: macos-15, target: aarch64, manylinux: "off", container: "", test: true }
+          - { name: macos-x86_64, os: macos-15, target: x86_64, manylinux: "off", container: "", test: false }
+          - { name: windows-x86_64, os: windows-latest, target: x64, manylinux: "off", container: "", test: true }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Build the wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          container: ${{ matrix.container }}
+          rust-toolchain: "1.97.0"
+          working-directory: crates/vikshep-py
+          args: --release --locked --out dist
+      - name: Test the wheel (pytest)
+        if: matrix.test
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy pytest jsonschema
+          python -m pip install --no-index --find-links crates/vikshep-py/dist vikshep-compute
+          python -m pytest -q crates/vikshep-py/tests
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.name }}
+          path: crates/vikshep-py/dist/*.whl
+          if-no-files-found: error
+
+  # C/C++ archives: headers, static and shared C API library, the vikshep-mcp
+  # data plane and the vikshep-conformance runner and certificate verifier.
+  capi:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x86_64, os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, smoke: true }
+          - { name: linux-aarch64, os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, smoke: true }
+          - { name: macos-arm64, os: macos-15, target: aarch64-apple-darwin, smoke: true }
+          - { name: macos-x86_64, os: macos-15, target: x86_64-apple-darwin, smoke: false }
+          - { name: windows-x86_64, os: windows-latest, target: x86_64-pc-windows-msvc, smoke: false }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+      - name: Build the C API library and the binaries
+        run: |
+          # --color never: the note must not end in an ANSI escape (see ci.yml).
+          cargo rustc --release --locked --color never --target ${{ matrix.target }} \
+            -p vikshep-capi --lib -- --print native-static-libs 2> build.log || { cat build.log; exit 1; }
+          sed -n 's/.*native-static-libs: //p' build.log | sed $'s/\x1b\\[[0-9;]*m//g' | head -n 1 > native-libs.txt
+          cargo build --release --locked --target ${{ matrix.target }} \
+            -p vikshep-mcp -p vikshep-conformance --bins
+      - name: Assemble the archive
+        run: |
+          out="vikshep-compute-${{ needs.version.outputs.version }}-${{ matrix.name }}"
+          rel="target/${{ matrix.target }}/release"
+          mkdir -p "$out/include" "$out/lib" "$out/bin"
+          cp include/vikshep.h include/vikshep_backend.h "$out/include/"
+          cp -R examples "$out/examples"
+          cp LICENSE LICENSING.md README.md native-libs.txt "$out/"
+          # The runner's default vectors path is baked in at build time, so ship
+          # them: bin/vikshep-conformance run --vectors conformance/vectors/v3
+          # (keep v3 in step with default_vectors_dir() in conformance-core).
+          mkdir -p "$out/conformance/vectors"
+          cp -R conformance/vectors/v3 "$out/conformance/vectors/"
+          cp conformance/cases.toml "$out/conformance/"
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            cp "$rel/vikshep_capi.lib" "$rel/vikshep_capi.dll" "$rel/vikshep_capi.dll.lib" "$out/lib/"
+            cp "$rel/vikshep-mcp.exe" "$rel/vikshep-conformance.exe" "$out/bin/"
+          else
+            cp "$rel"/libvikshep_capi.a "$out/lib/"
+            cp "$rel"/libvikshep_capi.so "$rel"/libvikshep_capi.dylib "$out/lib/" 2>/dev/null || true
+            test -n "$(ls "$out"/lib/libvikshep_capi.{so,dylib} 2>/dev/null)"
+            cp "$rel/vikshep-mcp" "$rel/vikshep-conformance" "$out/bin/"
+          fi
+          tar -czf "$out.tar.gz" "$out"
+          echo "ARCHIVE=$out" >> "$GITHUB_ENV"
+      - name: Smoke test the archive (C example, C++ example, conformance suite)
+        if: matrix.smoke
+        run: |
+          a="$ARCHIVE"
+          LIBS="$(cat "$a/native-libs.txt")"
+          cc -std=c99 -Wall -Wextra -Werror -pedantic -I"$a/include" "$a/examples/c/vikshep_example.c" "$a/lib/libvikshep_capi.a" $LIBS -o c_example
+          c++ -std=c++17 -Wall -Wextra -Werror -pedantic -I"$a/include" "$a/examples/cpp/vikshep_example.cpp" "$a/lib/libvikshep_capi.a" $LIBS -o cpp_example
+          ./c_example
+          ./cpp_example
+          # The shipped binary must pass the whole suite against the shipped vectors.
+          (cd "$a" && bin/vikshep-conformance run --vectors conformance/vectors/v3)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: capi-${{ matrix.name }}
+          path: ${{ env.ARCHIVE }}.tar.gz
+          if-no-files-found: error
+
+  pypi:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [version, wheels, capi]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # trusted publishing; no API token is stored
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+      - run: ls -l dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  crates:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [version, wheels, capi]
+    runs-on: ubuntu-latest
+    environment: crates-io
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Publish the crates (publish = false crates are skipped)
+        run: |
+          if [[ -z "$CARGO_REGISTRY_TOKEN" ]]; then
+            echo "::warning::CARGO_REGISTRY_TOKEN is not set; crates were not published (see RELEASING.md)"
+            exit 0
+          fi
+          cargo publish --workspace --locked
+
+  # Last, so its notes ("pip install ...", "cargo add ...") are true when it appears.
+  github-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [version, wheels, capi, pypi, crates]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd assets
+          sha256sum * > SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "vikshep-compute $GITHUB_REF_NAME" \
+            --notes "Python: pip install vikshep-compute==${{ needs.version.outputs.version }}. Rust: cargo add vikshep@=${{ needs.version.outputs.version }}. C/C++: the archives below (headers, static and shared C API library, vikshep-mcp, vikshep-conformance). Checksums: SHA256SUMS." \
+            ./*

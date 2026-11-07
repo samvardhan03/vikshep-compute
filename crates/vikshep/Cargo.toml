@@ -1,0 +1,26 @@
+[package]
+name = "vikshep"
+description = "Deterministic wavelet-scattering features for physics: the open Vikshep compute core in one crate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+vikshep-anomaly.workspace = true
+vikshep-backend-api.workspace = true
+vikshep-cpu.workspace = true
+vikshep-detmath.workspace = true
+vikshep-numerics.workspace = true
+vikshep-scatter.workspace = true
+vikshep-stats.workspace = true
+vikshep-train.workspace = true
+
+[lints]
+workspace = true

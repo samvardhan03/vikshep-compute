@@ -29,6 +29,7 @@ from ._core import (
     dcorr2_w,
     fingerprint,
     fingerprint_clouds,
+    issue_certificate,
     oid,
     provenance_manifest,
     r2,
@@ -36,6 +37,7 @@ from ._core import (
     scatter_paths,
     synthetic_dataset,
     train_tag,
+    verify_certificate,
 )
 
 __all__ = [
@@ -53,6 +55,7 @@ __all__ = [
     "dcorr2_w",
     "fingerprint",
     "fingerprint_clouds",
+    "issue_certificate",
     "oid",
     "provenance_manifest",
     "r2",
@@ -60,4 +63,5 @@ __all__ = [
     "scatter_paths",
     "synthetic_dataset",
     "train_tag",
+    "verify_certificate",
 ]

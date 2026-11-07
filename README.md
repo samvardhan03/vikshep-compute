@@ -103,7 +103,8 @@ print(vc.anomaly_query(index, vc.fingerprint_clouds(coeffs[:1], cfg))["flagged"]
 print(vc.conformance_selftest("quick")["failed"])  # 0
 ```
 
-Also: `calibrate`, `bench_report`, `scatter_paths`, `oid`. Inputs are
+Also: `calibrate`, `bench_report`, `scatter_paths`, `oid`, and the Determinism
+Certificate pair `issue_certificate` / `verify_certificate` (`docs/verify.md`). Inputs are
 converted with numpy and copied in row-major order into buffers owned by the
 library before any computation, so strides, memory order and byte order
 never change a result (VDS-1 section 20.1).

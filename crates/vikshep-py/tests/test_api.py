@@ -120,3 +120,24 @@ def test_fingerprint_clouds_from_coefficients():
     assert clouds.shape == (2, 16, coeffs.shape[1])
     # the mean of each distribution is the log-mean fingerprint
     assert np.allclose(clouds.mean(axis=1), fp, rtol=0, atol=1e-12)
+
+
+def test_certificate_round_trip_through_the_package(tmp_path):
+    """issue_certificate and verify_certificate are public: a certificate issued
+    for a scattering run verifies against the stored input and fails against a
+    changed one."""
+    assert {"issue_certificate", "verify_certificate"} <= set(vc.__all__)
+    x = np.random.default_rng(5).standard_normal((2, 256)).astype(np.float32)
+    cfg = {"J": 4, "Q": 1, "pad": "zero_pad", "shape": [256]}
+    _, coeffs_oid = vc.scatter(x, cfg)
+    manifest_json, _ = vc.provenance_manifest(x, cfg, coeffs_oid)
+    cert = vc.issue_certificate(manifest_json)
+
+    input_file = tmp_path / f"{vc.oid(x.tobytes())}.bin"
+    input_file.write_bytes(x.astype("<f4").tobytes())
+    report = vc.verify_certificate(cert, str(tmp_path))
+    assert report["verified"], report
+    assert report["error"] is None
+
+    input_file.write_bytes((x + 1.0).astype("<f4").tobytes())
+    assert not vc.verify_certificate(cert, str(tmp_path))["verified"]

@@ -55,6 +55,10 @@ Platforms without a wheel build from a checkout (README, Quickstart: Python).
    `git tag -a vX.Y.Z -m "vikshep-compute X.Y.Z"` then
    `git push origin vX.Y.Z`.
 3. Approve the `pypi` and `crates-io` deployments if reviewers are set.
+   The crates job publishes one crate at a time with
+   `scripts/publish-crates.sh` and waits out the crates.io rate limit on new
+   crates, so a release that creates new crates takes up to an hour. If it
+   fails anyway, re-run the job: crates already published are skipped.
 4. Check from a clean environment:
    - `python -m venv /tmp/v && /tmp/v/bin/pip install vikshep-compute==X.Y.Z && /tmp/v/bin/python -c "import vikshep_compute as vc; print(vc.conformance_selftest('quick')['failed'])"` prints `0`;
    - in a new cargo project, `cargo add vikshep@=X.Y.Z && cargo build`;

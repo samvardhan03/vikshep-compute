@@ -180,18 +180,21 @@ jobs:
     needs: [version, wheels, capi]
     runs-on: ubuntu-latest
     environment: crates-io
+    # The crates.io limit on new crates (about 5, then one per 10 minutes)
+    # makes a first release take most of an hour.
+    timeout-minutes: 180
     env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - name: Publish the crates (publish = false crates are skipped)
+      - name: Publish the crates (dependencies first; publish = false crates are skipped)
         run: |
           if [[ -z "$CARGO_REGISTRY_TOKEN" ]]; then
             echo "::warning::CARGO_REGISTRY_TOKEN is not set; crates were not published (see RELEASING.md)"
             exit 0
           fi
-          cargo publish --workspace --locked
+          scripts/publish-crates.sh
 
   # Last, so its notes ("pip install ...", "cargo add ...") are true when it appears.
   github-release:
